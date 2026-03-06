@@ -1,0 +1,83 @@
+import { Course, User } from './types';
+
+export const MOCK_USER: User = {
+  id: 'u1',
+  name: 'Sarah Johnson',
+  email: 'sarah.j@example.com',
+  role: 'Admin',
+  avatar: 'https://i.pravatar.cc/150?u=sarah',
+};
+
+export const MOCK_COURSES: Course[] = [
+  {
+    id: 'c1',
+    title: 'Mastering Modern Web Development',
+    subtitle: 'Build real-world projects and master modern frontend development',
+    description: 'Learn React, Tailwind CSS, and Node.js from scratch.',
+    language: 'English',
+    level: 'Beginner',
+    category: 'Development',
+    image: 'https://picsum.photos/seed/webdev/800/450',
+    targetStudents: ['Aspiring developers', 'Designers wanting to code'],
+    sections: [
+      {
+        id: 's1',
+        title: 'Introduction to the Course',
+        lectures: [
+          { id: 'l1', title: 'Welcome and Course Overview', type: 'Video', duration: '05:40' },
+          { id: 'l2', title: 'Resources and Materials', type: 'Article' },
+        ],
+      },
+      {
+        id: 's2',
+        title: 'Foundations of the Framework',
+        lectures: [
+          { id: 'l3', title: 'Understanding the Architecture', type: 'Video', duration: '12:20' },
+          { id: 'l4', title: 'Quiz 1: Testing Your Knowledge', type: 'Quiz' },
+        ],
+      },
+    ],
+    status: 'Published',
+    enrollmentStatus: 'Open',
+    visibility: 'Public',
+    studentsCount: 4203,
+    rating: 4.8,
+    lastUpdated: 'May 12, 2024',
+  },
+  {
+    id: 'c2',
+    title: 'The Complete UI/UX Design Handbook',
+    subtitle: 'From wireframing to high-fidelity prototyping',
+    description: 'Master Figma and design principles.',
+    language: 'English',
+    level: 'Intermediate',
+    category: 'Design',
+    image: 'https://picsum.photos/seed/design/800/450',
+    targetStudents: ['Product designers', 'Graphic designers'],
+    sections: [],
+    status: 'Published',
+    enrollmentStatus: 'Open',
+    visibility: 'Public',
+    studentsCount: 1892,
+    rating: 4.7,
+    lastUpdated: 'Jan 05, 2024',
+  },
+  {
+    id: 'c3',
+    title: 'Python for Data Science Specialization',
+    subtitle: 'Analyze data like a pro with Python',
+    description: 'Pandas, Numpy, and Matplotlib covered.',
+    language: 'English',
+    level: 'Beginner',
+    category: 'Development',
+    image: 'https://picsum.photos/seed/python/800/450',
+    targetStudents: ['Data analysts', 'Scientists'],
+    sections: [],
+    status: 'Draft',
+    enrollmentStatus: 'Closed',
+    visibility: 'Private',
+    studentsCount: 0,
+    rating: 0,
+    lastUpdated: '2 days ago',
+  },
+];
