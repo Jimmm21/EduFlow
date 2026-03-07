@@ -1,10 +1,19 @@
 import React from 'react';
-import { Search, Bell, ShoppingCart, User, BookOpen, Layout } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { Search, Bell, BookOpen, LogOut } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '../utils';
+import { useAuth } from '../auth/AuthContext';
+import { UserAvatar } from './UserAvatar';
 
 export const Navbar = () => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login', { replace: true });
+  };
 
   return (
     <header className="h-16 border-b border-slate-200 bg-white sticky top-0 z-50">
@@ -36,9 +45,20 @@ export const Navbar = () => {
             >
               Browse
             </Link>
-            <Link to="/admin" className="text-sm font-medium text-slate-600 hover:text-slate-900">
-              Instructor
+            <Link
+              to="/profile"
+              className={cn(
+                "text-sm font-medium transition-colors",
+                location.pathname === '/profile' ? "text-indigo-600" : "text-slate-600 hover:text-slate-900"
+              )}
+            >
+              Profile
             </Link>
+            {user?.role === 'Admin' ? (
+              <Link to="/admin" className="text-sm font-medium text-slate-600 hover:text-slate-900">
+                Admin Panel
+              </Link>
+            ) : null}
           </nav>
         </div>
 
@@ -54,19 +74,40 @@ export const Navbar = () => {
         </div>
 
         <div className="flex items-center gap-4">
-          <Link to="/login" className="text-sm font-bold text-slate-600 hover:text-indigo-600 transition-colors">
-            Sign In
-          </Link>
-          <Link to="/register" className="hidden sm:block bg-indigo-600 text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all">
-            Get Started
-          </Link>
+          {user ? (
+            <>
+              <span className="hidden md:block text-sm font-semibold text-slate-700">{user.name}</span>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="text-sm font-bold text-slate-600 hover:text-indigo-600 transition-colors flex items-center gap-1"
+              >
+                <LogOut className="w-4 h-4" />
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <Link to="/login" className="text-sm font-bold text-slate-600 hover:text-indigo-600 transition-colors">
+                Sign In
+              </Link>
+              <Link to="/register" className="hidden sm:block bg-indigo-600 text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all">
+                Get Started
+              </Link>
+            </>
+          )}
           <div className="w-px h-6 bg-slate-200 mx-1" />
           <button className="p-2 text-slate-600 hover:bg-slate-100 rounded-full">
             <Bell className="w-5 h-5" />
           </button>
-          <div className="w-8 h-8 rounded-full bg-slate-200 overflow-hidden border border-slate-200 cursor-pointer">
-            <img src="https://i.pravatar.cc/150?u=alex" alt="Profile" className="w-full h-full object-cover" />
-          </div>
+          <Link to="/profile" className="block cursor-pointer">
+            <UserAvatar
+              name={user?.name ?? 'Guest User'}
+              src={user?.avatar}
+              className="h-8 w-8 border border-slate-200"
+              textClassName="text-xs"
+            />
+          </Link>
         </div>
       </div>
     </header>

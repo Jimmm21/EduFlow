@@ -1,11 +1,17 @@
-import { Course, User } from './types';
+import {
+  Course,
+  CourseEnrollment,
+  CourseReview,
+  EnrollmentRequest,
+  StudentCourseProgress,
+  User,
+} from './types';
 
 export const MOCK_USER: User = {
   id: 'u1',
   name: 'Sarah Johnson',
   email: 'sarah.j@example.com',
   role: 'Admin',
-  avatar: 'https://i.pravatar.cc/150?u=sarah',
 };
 
 export const MOCK_COURSES: Course[] = [
@@ -79,5 +85,149 @@ export const MOCK_COURSES: Course[] = [
     studentsCount: 0,
     rating: 0,
     lastUpdated: '2 days ago',
+  },
+];
+
+export const MOCK_STUDENT_COURSE_PROGRESS: StudentCourseProgress[] = [
+  {
+    courseId: 'c1',
+    progress: 68,
+    status: 'in-progress',
+  },
+  {
+    courseId: 'c2',
+    progress: 100,
+    status: 'completed',
+  },
+  {
+    courseId: 'c3',
+    progress: 0,
+    status: 'wishlist',
+  },
+];
+
+export const MOCK_ENROLLMENT_REQUESTS: EnrollmentRequest[] = [
+  {
+    id: 'er1',
+    courseId: 'c1',
+    studentName: 'Liam Carter',
+    studentEmail: 'liam.carter@example.com',
+    requestedAt: 'Mar 4, 2026',
+    status: 'Pending',
+    note: 'Frontend developer moving into React architecture work.',
+  },
+  {
+    id: 'er2',
+    courseId: 'c1',
+    studentName: 'Ava Thompson',
+    studentEmail: 'ava.thompson@example.com',
+    requestedAt: 'Mar 5, 2026',
+    status: 'Accepted',
+    note: 'Needs access for internal upskilling program.',
+  },
+  {
+    id: 'er3',
+    courseId: 'c2',
+    studentName: 'Noah Richardson',
+    studentEmail: 'noah.richardson@example.com',
+    requestedAt: 'Mar 1, 2026',
+    status: 'Pending',
+    note: 'Product designer requesting enrollment for portfolio work.',
+  },
+  {
+    id: 'er4',
+    courseId: 'c2',
+    studentName: 'Mia Patel',
+    studentEmail: 'mia.patel@example.com',
+    requestedAt: 'Feb 28, 2026',
+    status: 'Rejected',
+    note: 'Enrollment deferred until prerequisite design basics are completed.',
+  },
+  {
+    id: 'er5',
+    courseId: 'c3',
+    studentName: 'Ethan Brooks',
+    studentEmail: 'ethan.brooks@example.com',
+    requestedAt: 'Mar 2, 2026',
+    status: 'Pending',
+    note: 'Data analyst requesting approval for cohort intake.',
+  },
+];
+
+export const MOCK_COURSE_ENROLLMENTS: CourseEnrollment[] = [
+  {
+    id: 'ce1',
+    courseId: 'c1',
+    studentName: 'Ava Thompson',
+    studentEmail: 'ava.thompson@example.com',
+    enrolledAt: 'Mar 5, 2026',
+    progress: 42,
+  },
+  {
+    id: 'ce2',
+    courseId: 'c1',
+    studentName: 'Jordan Lee',
+    studentEmail: 'jordan.lee@example.com',
+    enrolledAt: 'Feb 18, 2026',
+    progress: 76,
+  },
+  {
+    id: 'ce3',
+    courseId: 'c1',
+    studentName: 'Priya Nair',
+    studentEmail: 'priya.nair@example.com',
+    enrolledAt: 'Feb 12, 2026',
+    progress: 58,
+  },
+  {
+    id: 'ce4',
+    courseId: 'c2',
+    studentName: 'Noah Richardson',
+    studentEmail: 'noah.richardson@example.com',
+    enrolledAt: 'Mar 2, 2026',
+    progress: 19,
+  },
+  {
+    id: 'ce5',
+    courseId: 'c2',
+    studentName: 'Megan Cruz',
+    studentEmail: 'megan.cruz@example.com',
+    enrolledAt: 'Feb 8, 2026',
+    progress: 84,
+  },
+  {
+    id: 'ce6',
+    courseId: 'c3',
+    studentName: 'Ethan Brooks',
+    studentEmail: 'ethan.brooks@example.com',
+    enrolledAt: 'Mar 3, 2026',
+    progress: 0,
+  },
+];
+
+export const MOCK_COURSE_REVIEWS: CourseReview[] = [
+  {
+    id: 'cr1',
+    courseId: 'c1',
+    studentName: 'Jordan Lee',
+    rating: 5,
+    comment: 'Strong pacing and clear examples. The project work felt practical from the first lesson.',
+    submittedAt: 'Mar 1, 2026',
+  },
+  {
+    id: 'cr2',
+    courseId: 'c1',
+    studentName: 'Priya Nair',
+    rating: 4,
+    comment: 'Good walkthroughs and structure. I wanted a bit more depth in deployment topics.',
+    submittedAt: 'Feb 26, 2026',
+  },
+  {
+    id: 'cr3',
+    courseId: 'c2',
+    studentName: 'Megan Cruz',
+    rating: 5,
+    comment: 'Very useful design exercises and strong explanations of workflow decisions.',
+    submittedAt: 'Feb 20, 2026',
   },
 ];

@@ -1,30 +1,204 @@
-import React, { useState } from 'react';
-import { ChevronLeft, Save, Eye, Plus, Video, FileText, HelpCircle, Trash2, GripVertical, CheckCircle2, Circle } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { ChevronLeft, Save, Eye, Plus, Video, FileText, HelpCircle, Trash2, GripVertical, CheckCircle2, Circle, Bold, Italic, List, Upload, X, Sparkles } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { CATEGORIES, LEVELS, LANGUAGES, cn } from '../../utils';
-import { Section, Lecture } from '../../types';
+import { Section, Lecture, ContentType } from '../../types';
+import { getCourseSectionsDraft, hasStoredCourseSectionsDraft, saveCourseSectionsDraft } from '../../admin/courseDraftStore';
+
+const COURSE_API_BASE_URL = (
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
+  'http://localhost:8001'
+).replace(/\/$/, '');
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+const MAX_VIDEO_SIZE_BYTES = 30 * 1024 * 1024;
+
+const extractApiMessage = (payload: unknown): string | undefined => {
+  if (!payload || typeof payload !== 'object') {
+    return undefined;
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (typeof record.message === 'string') {
+    return record.message;
+  }
+
+  if (typeof record.detail === 'string') {
+    return record.detail;
+  }
+
+  if (Array.isArray(record.detail)) {
+    const first = record.detail[0];
+    if (first && typeof first === 'object') {
+      const firstRecord = first as Record<string, unknown>;
+      if (typeof firstRecord.msg === 'string') {
+        return firstRecord.msg;
+      }
+    }
+  }
+
+  return undefined;
+};
+
+const parseUploadedAsset = (payload: unknown): { url: string; fileName: string } | null => {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (record.success !== true || !record.asset || typeof record.asset !== 'object') {
+    return null;
+  }
+
+  const asset = record.asset as Record<string, unknown>;
+  if (typeof asset.url !== 'string' || typeof asset.fileName !== 'string') {
+    return null;
+  }
+
+  const url = asset.url.trim();
+  const fileName = asset.fileName.trim();
+  if (!url || !fileName) {
+    return null;
+  }
+
+  return { url, fileName };
+};
+
+const getAssetFileNameFromValue = (value: string): string => {
+  const normalized = value.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.startsWith('uploaded://')) {
+    const rawFileName = normalized.slice('uploaded://'.length);
+    try {
+      return decodeURIComponent(rawFileName);
+    } catch {
+      return rawFileName;
+    }
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    const fileName = parsed.pathname.split('/').filter(Boolean).pop();
+    return fileName ? decodeURIComponent(fileName) : '';
+  } catch {
+    const fileName = normalized.split('/').filter(Boolean).pop();
+    return fileName ? decodeURIComponent(fileName) : '';
+  }
+};
+
+const sanitizePersistedAssetUrl = (value: string): string => {
+  const normalized = value.trim();
+  if (!normalized || normalized.startsWith('uploaded://')) {
+    return '';
+  }
+
+  return normalized;
+};
+
+const parseGeneratedCourseContent = (
+  payload: unknown,
+): { description: string; learningOutcomes: string[]; message?: string } | null => {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (record.success !== true) {
+    return null;
+  }
+
+  if (!record.content || typeof record.content !== 'object') {
+    return null;
+  }
+
+  const content = record.content as Record<string, unknown>;
+  const description = typeof content.description === 'string' ? content.description.trim() : '';
+  if (!description) {
+    return null;
+  }
+
+  const learningOutcomes = Array.isArray(content.learningOutcomes)
+    ? content.learningOutcomes
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean)
+    : [];
+  const message = typeof record.message === 'string' ? record.message.trim() : undefined;
+
+  return {
+    description,
+    learningOutcomes,
+    message,
+  };
+};
 
 const steps = [
   { id: 1, label: 'Course Landing Page' },
   { id: 2, label: 'Curriculum' },
-  { id: 3, label: 'Target Students' },
+  { id: 3, label: "What You'll Learn" },
   { id: 4, label: 'Settings' },
 ];
 
+type DeleteTarget =
+  | {
+      type: 'section';
+      sectionId: string;
+      title: string;
+      message: string;
+    }
+  | {
+      type: 'lecture';
+      sectionId: string;
+      lectureId: string;
+      title: string;
+      message: string;
+    };
+
 export const CourseCreator = () => {
   const { id } = useParams();
-  const [activeStep, setActiveStep] = useState(1);
-  const [sections, setSections] = useState<Section[]>([
-    {
-      id: 's1',
-      title: 'Introduction to the Course',
-      lectures: [
-        { id: 'l1', title: 'Welcome and Course Overview', type: 'Video', duration: '05:40' },
-        { id: 'l2', title: 'Resources and Materials', type: 'Article' },
-      ],
-    },
-  ]);
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const courseKey = id ?? 'new';
+  const getStepFromQuery = () => {
+    const step = Number(searchParams.get('step'));
+    return Number.isInteger(step) && step >= 1 && step <= 4 ? step : 1;
+  };
+  const [activeStep, setActiveStep] = useState(getStepFromQuery());
+  const [courseTitle, setCourseTitle] = useState('');
+  const [courseSubtitle, setCourseSubtitle] = useState('');
+  const [courseDescription, setCourseDescription] = useState('');
+  const [language, setLanguage] = useState(LANGUAGES[0]);
+  const [level, setLevel] = useState(LEVELS[0]);
+  const [category, setCategory] = useState(CATEGORIES[0]);
+  const [courseImage, setCourseImage] = useState('');
+  const [promoVideo, setPromoVideo] = useState('');
+  const [courseImageFileName, setCourseImageFileName] = useState('');
+  const [promoVideoFileName, setPromoVideoFileName] = useState('');
+  const [targetStudentsInput, setTargetStudentsInput] = useState('');
+  const [welcomeMessage, setWelcomeMessage] = useState('');
+  const [congratulationsMessage, setCongratulationsMessage] = useState('');
+  const [courseStatus, setCourseStatus] = useState<'Draft' | 'Published'>('Draft');
+  const [visibility, setVisibility] = useState<'Public' | 'Private'>('Public');
+  const [enrollmentStatus, setEnrollmentStatus] = useState<'Open' | 'Closed'>('Open');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+  const [isUploadingCourseImage, setIsUploadingCourseImage] = useState(false);
+  const [isUploadingPromoVideo, setIsUploadingPromoVideo] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiMessage, setAiMessage] = useState<string | null>(null);
+  const [sections, setSections] = useState<Section[]>(() => getCourseSectionsDraft(courseKey));
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+
+  const setAndPersistSections = (nextSections: Section[]) => {
+    setSections(nextSections);
+    saveCourseSectionsDraft(courseKey, nextSections);
+  };
 
   const addSection = () => {
     const newSection: Section = {
@@ -32,20 +206,516 @@ export const CourseCreator = () => {
       title: 'New Section',
       lectures: [],
     };
-    setSections([...sections, newSection]);
+    setAndPersistSections([...sections, newSection]);
   };
 
-  const addLecture = (sectionId: string) => {
-    setSections(sections.map(s => {
-      if (s.id === sectionId) {
-        return {
-          ...s,
-          lectures: [...s.lectures, { id: `l${Date.now()}`, title: 'New Lecture', type: 'Video' }]
-        };
-      }
-      return s;
-    }));
+  const removeSection = (sectionId: string) => {
+    const sectionToRemove = sections.find((section) => section.id === sectionId);
+    if (!sectionToRemove) {
+      return;
+    }
+
+    setDeleteTarget({
+      type: 'section',
+      sectionId,
+      title: sectionToRemove.title,
+      message: `Delete "${sectionToRemove.title}" and all of its lessons?`,
+    });
   };
+
+  const addContentItem = (sectionId: string, type: ContentType) => {
+    const defaultByType: Record<ContentType, Partial<Lecture>> = {
+      Video: { title: 'New Lecture', duration: '05:00', videoUrl: '' },
+      Quiz: { title: 'New Quiz', duration: '03:00', content: '' },
+      Resource: { title: 'New Resource', content: '' },
+      Article: { title: 'New Article', content: '' },
+    };
+
+    const newLecture: Lecture = {
+      id: `l${Date.now()}`,
+      type,
+      title: defaultByType[type].title ?? 'New Content',
+      duration: defaultByType[type].duration,
+      content: defaultByType[type].content,
+      videoUrl: defaultByType[type].videoUrl,
+    };
+
+    const nextSections = sections.map((section) =>
+        section.id === sectionId
+          ? { ...section, lectures: [...section.lectures, newLecture] }
+          : section,
+    );
+    setAndPersistSections(nextSections);
+    navigate(`/admin/courses/${courseKey}/sections/${sectionId}/lectures/${newLecture.id}/edit`);
+  };
+
+  const removeLecture = (sectionId: string, lectureId: string) => {
+    const section = sections.find((item) => item.id === sectionId);
+    const lecture = section?.lectures.find((item) => item.id === lectureId);
+    if (!section || !lecture) {
+      return;
+    }
+
+    setDeleteTarget({
+      type: 'lecture',
+      sectionId,
+      lectureId,
+      title: lecture.title,
+      message: `Delete "${lecture.title}" from "${section.title}"?`,
+    });
+  };
+
+  const closeDeleteDialog = () => {
+    setDeleteTarget(null);
+  };
+
+  const confirmDelete = () => {
+    if (!deleteTarget) {
+      return;
+    }
+
+    if (deleteTarget.type === 'section') {
+      const nextSections = sections.filter((section) => section.id !== deleteTarget.sectionId);
+      setAndPersistSections(nextSections);
+      setDeleteTarget(null);
+      return;
+    }
+
+    const nextSections = sections.map((section) =>
+      section.id === deleteTarget.sectionId
+        ? {
+            ...section,
+            lectures: section.lectures.filter((lecture) => lecture.id !== deleteTarget.lectureId),
+          }
+        : section,
+    );
+    setAndPersistSections(nextSections);
+    setDeleteTarget(null);
+  };
+
+  const openLessonEditor = (sectionId: string, lectureId: string) => {
+    navigate(`/admin/courses/${courseKey}/sections/${sectionId}/lectures/${lectureId}/edit`);
+  };
+
+  const getLectureIcon = (type: ContentType, className: string) => {
+    if (type === 'Video') {
+      return <Video className={className} />;
+    }
+
+    if (type === 'Quiz') {
+      return <HelpCircle className={className} />;
+    }
+
+    return <FileText className={className} />;
+  };
+
+  useEffect(() => {
+    setActiveStep(getStepFromQuery());
+  }, [searchParams]);
+
+  useEffect(() => {
+    setSections(getCourseSectionsDraft(courseKey));
+  }, [courseKey]);
+
+  useEffect(() => {
+    if (!id) {
+      return;
+    }
+
+    const fetchCourse = async () => {
+      try {
+        const response = await fetch(`${COURSE_API_BASE_URL}/api/admin/courses/${id}`);
+        const payload = await response.json().catch(() => null);
+        const payloadRecord =
+          payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : undefined;
+        const course =
+          payloadRecord?.course && typeof payloadRecord.course === 'object'
+            ? (payloadRecord.course as Record<string, unknown>)
+            : undefined;
+
+        if (!response.ok || payloadRecord?.success !== true || !course) {
+          return;
+        }
+
+        setCourseTitle(typeof course.title === 'string' ? course.title : '');
+        setCourseSubtitle(typeof course.subtitle === 'string' ? course.subtitle : '');
+        setCourseDescription(typeof course.description === 'string' ? course.description : '');
+        setLanguage(typeof course.language === 'string' ? course.language : LANGUAGES[0]);
+        setLevel(typeof course.level === 'string' ? course.level : LEVELS[0]);
+        setCategory(typeof course.category === 'string' ? course.category : CATEGORIES[0]);
+        const incomingCourseImage = sanitizePersistedAssetUrl(typeof course.image === 'string' ? course.image : '');
+        const incomingPromoVideo = sanitizePersistedAssetUrl(typeof course.promoVideo === 'string' ? course.promoVideo : '');
+        setCourseImage(incomingCourseImage);
+        setPromoVideo(incomingPromoVideo);
+        setCourseImageFileName(getAssetFileNameFromValue(incomingCourseImage));
+        setPromoVideoFileName(getAssetFileNameFromValue(incomingPromoVideo));
+        setCourseStatus(course.status === 'Published' ? 'Published' : 'Draft');
+        setVisibility(course.visibility === 'Private' ? 'Private' : 'Public');
+        setEnrollmentStatus(course.enrollmentStatus === 'Closed' ? 'Closed' : 'Open');
+
+        const targetStudents = Array.isArray(course.targetStudents)
+          ? course.targetStudents.filter((item): item is string => typeof item === 'string')
+          : [];
+        setTargetStudentsInput(targetStudents.join('\n'));
+
+        const apiSections = Array.isArray(course.sections)
+          ? (course.sections as Section[])
+          : [];
+        const hasLocalDraft = hasStoredCourseSectionsDraft(courseKey);
+        if (apiSections.length > 0 && !hasLocalDraft) {
+          setAndPersistSections(apiSections);
+        }
+      } catch {
+        // Keep local draft values if backend fetch fails.
+      }
+    };
+
+    fetchCourse();
+  }, [id]);
+
+  const handleStepChange = (step: number) => {
+    setActiveStep(step);
+    const nextParams = new URLSearchParams(searchParams);
+    if (step === 1) {
+      nextParams.delete('step');
+    } else {
+      nextParams.set('step', String(step));
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
+
+  const uploadCourseAsset = async (file: File, endpoint: '/api/admin/uploads/course-image' | '/api/admin/uploads/promo-video') => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${COURSE_API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      body: formData,
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(extractApiMessage(payload) ?? 'Unable to upload file.');
+    }
+
+    const asset = parseUploadedAsset(payload);
+    if (!asset) {
+      throw new Error('Unexpected response from upload service.');
+    }
+
+    return asset;
+  };
+
+  const handleCourseImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+
+    setSaveError(null);
+    setSaveMessage(null);
+
+    if (!file.type.startsWith('image/')) {
+      setSaveError('Course image must be an image file.');
+      return;
+    }
+
+    if (file.size > MAX_IMAGE_SIZE_BYTES) {
+      setSaveError('Course image must be 5 MB or smaller.');
+      return;
+    }
+
+    setIsUploadingCourseImage(true);
+
+    try {
+      const asset = await uploadCourseAsset(file, '/api/admin/uploads/course-image');
+      setCourseImage(asset.url);
+      setCourseImageFileName(asset.fileName);
+      setSaveMessage('Course image uploaded.');
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Unable to upload course image.');
+    } finally {
+      setIsUploadingCourseImage(false);
+    }
+  };
+
+  const handlePromoVideoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+
+    setSaveError(null);
+    setSaveMessage(null);
+
+    if (!file.type.startsWith('video/')) {
+      setSaveError('Promotional video must be a video file.');
+      return;
+    }
+
+    if (file.size > MAX_VIDEO_SIZE_BYTES) {
+      setSaveError('Promotional video must be 30 MB or smaller.');
+      return;
+    }
+
+    setIsUploadingPromoVideo(true);
+
+    try {
+      const asset = await uploadCourseAsset(file, '/api/admin/uploads/promo-video');
+      setPromoVideo(asset.url);
+      setPromoVideoFileName(asset.fileName);
+      setSaveMessage('Promotional video uploaded.');
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Unable to upload promotional video.');
+    } finally {
+      setIsUploadingPromoVideo(false);
+    }
+  };
+
+  const clearCourseImage = () => {
+    setCourseImage('');
+    setCourseImageFileName('');
+  };
+
+  const clearPromoVideo = () => {
+    setPromoVideo('');
+    setPromoVideoFileName('');
+  };
+
+  const generateAiCourseCopy = async () => {
+    const title = courseTitle.trim();
+    if (!title) {
+      setAiError('Enter a course title first to generate content.');
+      setAiMessage(null);
+      return;
+    }
+
+    setAiError(null);
+    setAiMessage(null);
+    setIsGeneratingAi(true);
+
+    try {
+      const response = await fetch(`${COURSE_API_BASE_URL}/api/admin/courses/generate-content`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title,
+          language,
+          level,
+          category,
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        setAiError(extractApiMessage(payload) ?? 'Unable to generate content right now.');
+        return;
+      }
+
+      const generatedContent = parseGeneratedCourseContent(payload);
+      if (!generatedContent) {
+        setAiError('Unexpected response from AI content service.');
+        return;
+      }
+
+      setCourseDescription(generatedContent.description);
+      if (generatedContent.learningOutcomes.length > 0) {
+        setTargetStudentsInput(generatedContent.learningOutcomes.join('\n'));
+      }
+      setAiMessage(generatedContent.message || 'Generated course description and learning outcomes.');
+    } catch {
+      setAiError('Cannot reach the AI content service. Please try again.');
+    } finally {
+      setIsGeneratingAi(false);
+    }
+  };
+
+  const getNormalizedTargetStudents = () =>
+    targetStudentsInput
+      .split(/\r?\n|,/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const getNormalizedSections = () =>
+    sections.map((section, sectionIndex) => ({
+      ...section,
+      title: section.title.trim() || `Section ${sectionIndex + 1}`,
+      lectures: section.lectures.map((lecture, lectureIndex) => ({
+        ...lecture,
+        title: lecture.title.trim() || `Lecture ${lectureIndex + 1}`,
+        duration: lecture.duration?.trim() || undefined,
+        content: lecture.content ?? undefined,
+        videoUrl: lecture.videoUrl?.trim() || undefined,
+      })),
+    }));
+
+  const handlePreview = () => {
+    const editorBasePath = id ? `/admin/courses/${id}` : '/admin/courses/new';
+    const previewBackTo = searchParams.toString()
+      ? `${editorBasePath}?${searchParams.toString()}`
+      : editorBasePath;
+
+    navigate(`/course/${id ?? 'preview'}`, {
+      state: {
+        previewCourse: {
+          id: id ?? 'preview',
+          title: courseTitle.trim() || 'Untitled Course',
+          subtitle: courseSubtitle.trim() || 'Course subtitle preview',
+          description: courseDescription.trim() || 'Course description preview.',
+          language,
+          level,
+          category,
+          image: sanitizePersistedAssetUrl(courseImage),
+          promoVideo: sanitizePersistedAssetUrl(promoVideo) || undefined,
+          targetStudents: getNormalizedTargetStudents(),
+          sections: getNormalizedSections(),
+          status: courseStatus,
+          enrollmentStatus,
+          visibility,
+          studentsCount: 0,
+          rating: 0,
+          lastUpdated: new Date().toISOString().slice(0, 10),
+        },
+        previewBackTo,
+      },
+    });
+  };
+
+  const saveCourse = async (nextStatus: 'Draft' | 'Published' = courseStatus) => {
+    const title = courseTitle.trim();
+    if (!title) {
+      return {
+        success: false,
+        message: 'Course title is required.',
+      };
+    }
+
+    const targetStudents = getNormalizedTargetStudents();
+    const normalizedSections = getNormalizedSections();
+    const normalizedCourseImage = sanitizePersistedAssetUrl(courseImage);
+    const normalizedPromoVideo = sanitizePersistedAssetUrl(promoVideo);
+
+    const payload = {
+      title,
+      subtitle: courseSubtitle.trim(),
+      description: courseDescription.trim(),
+      language,
+      level,
+      category,
+      image: normalizedCourseImage,
+      promoVideo: normalizedPromoVideo || undefined,
+      targetStudents,
+      status: nextStatus,
+      enrollmentStatus,
+      visibility,
+      sections: normalizedSections,
+    };
+
+    const endpoint = id
+      ? `${COURSE_API_BASE_URL}/api/admin/courses/${id}`
+      : `${COURSE_API_BASE_URL}/api/admin/courses`;
+    const method = id ? 'PUT' : 'POST';
+
+    const response = await fetch(endpoint, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      return {
+        success: false,
+        message: extractApiMessage(body) ?? 'Unable to save course.',
+      };
+    }
+
+    const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : undefined;
+    const course = record?.course;
+    if (
+      !course ||
+      typeof course !== 'object' ||
+      typeof (course as Record<string, unknown>).id !== 'string'
+    ) {
+      return {
+        success: false,
+        message: 'Unexpected response from course service.',
+      };
+    }
+
+    return {
+      success: true,
+      courseId: (course as Record<string, string>).id,
+      status: ((course as Record<string, unknown>).status === 'Published' ? 'Published' : 'Draft') as 'Draft' | 'Published',
+    };
+  };
+
+  const handleSaveAndContinue = async () => {
+    setSaveError(null);
+    setSaveMessage(null);
+    setIsSaving(true);
+
+    try {
+      const result = await saveCourse(courseStatus);
+      if (!result.success || !result.courseId) {
+        setSaveError(result.message ?? 'Unable to save course.');
+        return;
+      }
+
+      saveCourseSectionsDraft(result.courseId, sections);
+      setCourseStatus(result.status ?? courseStatus);
+      const nextStep = Math.min(activeStep + 1, 4);
+
+      if (!id) {
+        const query = nextStep === 1 ? '' : `?step=${nextStep}`;
+        navigate(`/admin/courses/${result.courseId}${query}`);
+        return;
+      }
+
+      handleStepChange(nextStep);
+      setSaveMessage('Course saved.');
+    } catch {
+      setSaveError('Cannot reach the course service. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    setSaveError(null);
+    setSaveMessage(null);
+    setIsPublishing(true);
+
+    try {
+      const result = await saveCourse('Published');
+      if (!result.success || !result.courseId) {
+        setSaveError(result.message ?? 'Unable to publish course.');
+        return;
+      }
+
+      saveCourseSectionsDraft(result.courseId, sections);
+      setCourseStatus('Published');
+
+      const query = activeStep === 1 ? '' : `?step=${activeStep}`;
+      if (!id) {
+        navigate(`/admin/courses/${result.courseId}${query}`, { replace: true });
+        return;
+      }
+
+      setSaveMessage('Course published. Students can now view and enroll.');
+    } catch {
+      setSaveError('Cannot reach the course service. Please try again.');
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+  const isUploadingAsset = isUploadingCourseImage || isUploadingPromoVideo;
 
   return (
     <div className="max-w-5xl mx-auto pb-20">
@@ -56,24 +726,48 @@ export const CourseCreator = () => {
           </Link>
           <div>
             <h1 className="text-xl font-bold text-slate-900">{id ? 'Edit Course' : 'Create New Course'}</h1>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Draft Saved</p>
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+              {courseStatus === 'Published' ? 'Published' : 'Draft Saved'}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all">
+          <button
+            type="button"
+            onClick={handlePreview}
+            className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+          >
             Preview
           </button>
-          <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-xl font-semibold transition-all shadow-lg shadow-indigo-200 active:scale-95">
-            Save and Continue
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={isSaving || isPublishing || isUploadingAsset}
+            className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-2 font-semibold text-emerald-700 transition-all hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            {isPublishing ? 'Publishing...' : courseStatus === 'Published' ? 'Update Published' : 'Publish'}
+          </button>
+          <button
+            type="button"
+            onClick={handleSaveAndContinue}
+            disabled={isSaving || isPublishing || isUploadingAsset}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed text-white px-6 py-2 rounded-xl font-semibold transition-all shadow-lg shadow-indigo-200 active:scale-95"
+          >
+            {isSaving ? 'Saving...' : 'Save and Continue'}
           </button>
         </div>
       </header>
+      {saveError ? <p className="mb-6 text-sm font-medium text-red-600">{saveError}</p> : null}
+      {saveMessage ? <p className="mb-6 text-sm font-medium text-emerald-600">{saveMessage}</p> : null}
+      {aiError ? <p className="mb-6 text-sm font-medium text-red-600">{aiError}</p> : null}
+      {aiMessage ? <p className="mb-6 text-sm font-medium text-indigo-600">{aiMessage}</p> : null}
 
       <nav className="flex items-center justify-between border-b border-slate-200 mb-8">
         {steps.map((step) => (
           <button
             key={step.id}
-            onClick={() => setActiveStep(step.id)}
+            onClick={() => handleStepChange(step.id)}
             className={cn(
               "px-4 py-4 text-sm font-semibold border-b-2 transition-all",
               activeStep === step.id 
@@ -91,7 +785,7 @@ export const CourseCreator = () => {
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Course Builder</h3>
             <nav className="space-y-1">
-              {['Landing Page Info', 'Course Image', 'Promotional Video', 'Target Students'].map((item) => (
+              {['Landing Page Info', "What You'll Learn", 'Course Image', 'Promotional Video'].map((item) => (
                 <button key={item} className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50">
                   {item}
                 </button>
@@ -127,6 +821,8 @@ export const CourseCreator = () => {
                     <input 
                       type="text" 
                       placeholder="e.g. Master React and Tailwind CSS from scratch" 
+                      value={courseTitle}
+                      onChange={(event) => setCourseTitle(event.target.value)}
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
                     />
                     <p className="text-xs text-slate-400">Your title should be a mix of attention-grabbing and informative. (Max 60 characters)</p>
@@ -137,26 +833,74 @@ export const CourseCreator = () => {
                     <input 
                       type="text" 
                       placeholder="e.g. Build real-world projects and master modern frontend development" 
+                      value={courseSubtitle}
+                      onChange={(event) => setCourseSubtitle(event.target.value)}
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
                     />
+                    <p className="text-xs text-slate-400">Use 1 or 2 sentences to describe the primary goal of the course.</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <label className="text-sm font-bold text-slate-700">Course Description</label>
+                      <button
+                        type="button"
+                        onClick={generateAiCourseCopy}
+                        disabled={isGeneratingAi}
+                        className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        {isGeneratingAi ? 'Generating...' : 'Generate with AI'}
+                      </button>
+                    </div>
+                    <textarea
+                      value={courseDescription}
+                      onChange={(event) => setCourseDescription(event.target.value)}
+                      placeholder="Describe what students will learn in your course..."
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none min-h-[180px] transition-all"
+                    />
+                    <p className="text-xs text-slate-400">Provide a clear overview of outcomes, key topics, and who this course is for.</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700">What You'll Learn</label>
+                    <textarea
+                      value={targetStudentsInput}
+                      onChange={(event) => setTargetStudentsInput(event.target.value)}
+                      placeholder="Add one learning outcome per line. Example: Build and deploy a full project from scratch."
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none min-h-[150px] transition-all"
+                    />
+                    <p className="text-xs text-slate-400">This section is auto-filled when you click Generate with AI above.</p>
                   </div>
 
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-slate-700">Language</label>
-                      <select className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none">
+                      <select
+                        value={language}
+                        onChange={(event) => setLanguage(event.target.value)}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none"
+                      >
                         {LANGUAGES.map(l => <option key={l}>{l}</option>)}
                       </select>
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-slate-700">Level</label>
-                      <select className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none">
+                      <select
+                        value={level}
+                        onChange={(event) => setLevel(event.target.value)}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none"
+                      >
                         {LEVELS.map(l => <option key={l}>{l}</option>)}
                       </select>
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-slate-700">Category</label>
-                      <select className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none">
+                      <select
+                        value={category}
+                        onChange={(event) => setCategory(event.target.value)}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none"
+                      >
                         {CATEGORIES.map(c => <option key={c}>{c}</option>)}
                       </select>
                     </div>
@@ -165,16 +909,82 @@ export const CourseCreator = () => {
                   <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-slate-700">Course Image</label>
-                      <div className="aspect-video bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-slate-100 transition-all">
-                        <Plus className="w-8 h-8 text-slate-300" />
-                        <span className="text-xs font-bold text-slate-400">Upload Image</span>
+                      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm text-slate-600 truncate">
+                            {courseImageFileName || (courseImage ? 'Uploaded image ready' : 'No image uploaded')}
+                          </p>
+                          {courseImage ? (
+                            <button
+                              type="button"
+                              onClick={clearCourseImage}
+                              disabled={isUploadingCourseImage}
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              <X className="h-3 w-3" />
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <label
+                            className={cn(
+                              'inline-flex cursor-pointer items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800',
+                              isUploadingCourseImage ? 'cursor-not-allowed opacity-70 hover:bg-slate-900' : '',
+                            )}
+                          >
+                            <Upload className="h-4 w-4" />
+                            {isUploadingCourseImage ? 'Uploading...' : 'Upload Image'}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleCourseImageUpload}
+                              disabled={isUploadingCourseImage}
+                              className="hidden"
+                            />
+                          </label>
+                          <p className="text-xs text-slate-500">PNG, JPG, WEBP up to 5 MB.</p>
+                        </div>
                       </div>
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-slate-700">Promotional Video</label>
-                      <div className="aspect-video bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-slate-100 transition-all">
-                        <Video className="w-8 h-8 text-slate-300" />
-                        <span className="text-xs font-bold text-slate-400">Upload Video</span>
+                      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm text-slate-600 truncate">
+                            {promoVideoFileName || (promoVideo ? 'Uploaded video ready' : 'No video uploaded')}
+                          </p>
+                          {promoVideo ? (
+                            <button
+                              type="button"
+                              onClick={clearPromoVideo}
+                              disabled={isUploadingPromoVideo}
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              <X className="h-3 w-3" />
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <label
+                            className={cn(
+                              'inline-flex cursor-pointer items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800',
+                              isUploadingPromoVideo ? 'cursor-not-allowed opacity-70 hover:bg-slate-900' : '',
+                            )}
+                          >
+                            <Upload className="h-4 w-4" />
+                            {isUploadingPromoVideo ? 'Uploading...' : 'Upload Video'}
+                            <input
+                              type="file"
+                              accept="video/*"
+                              onChange={handlePromoVideoUpload}
+                              disabled={isUploadingPromoVideo}
+                              className="hidden"
+                            />
+                          </label>
+                          <p className="text-xs text-slate-500">MP4/WEBM/MOV up to 30 MB.</p>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -212,11 +1022,24 @@ export const CourseCreator = () => {
                         <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Section {sIdx + 1}:</span>
                         <input 
                           type="text" 
-                          defaultValue={section.title}
+                          value={section.title}
+                          onChange={(event) => {
+                            const nextSections = sections.map((item) =>
+                              item.id === section.id
+                                ? { ...item, title: event.target.value }
+                                : item,
+                            );
+                            setAndPersistSections(nextSections);
+                          }}
                           className="font-bold text-slate-900 bg-transparent border-none focus:ring-0 p-0"
                         />
                       </div>
-                      <button className="p-2 text-slate-400 hover:text-red-600 transition-colors">
+                      <button
+                        type="button"
+                        onClick={() => removeSection(section.id)}
+                        className="p-2 text-slate-400 hover:text-red-600 transition-colors"
+                        aria-label={`Delete ${section.title}`}
+                      >
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
@@ -225,24 +1048,59 @@ export const CourseCreator = () => {
                         <div key={lecture.id} className="flex items-center gap-4 p-4 border border-slate-100 rounded-xl hover:border-indigo-200 transition-all group">
                           <GripVertical className="w-4 h-4 text-slate-200 group-hover:text-slate-400" />
                           <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center">
-                            {lecture.type === 'Video' ? <Video className="w-4 h-4 text-indigo-600" /> : <FileText className="w-4 h-4 text-indigo-600" />}
+                            {getLectureIcon(lecture.type, 'w-4 h-4 text-indigo-600')}
                           </div>
                           <div className="flex-1">
                             <h4 className="text-sm font-bold text-slate-900">{lIdx + 1}. {lecture.title}</h4>
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{lecture.type}</p>
                             {lecture.duration && <span className="text-xs text-slate-400">{lecture.duration}</span>}
                           </div>
-                          <button className="px-3 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all">
-                            Edit Content
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openLessonEditor(section.id, lecture.id)}
+                              className="px-3 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                            >
+                              Edit Content
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeLecture(section.id, lecture.id)}
+                              className="inline-flex items-center justify-center rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                              aria-label={`Delete ${lecture.title}`}
+                              title="Delete lesson"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                       ))}
-                      <button 
-                        onClick={() => addLecture(section.id)}
-                        className="w-full py-3 border-2 border-dashed border-slate-100 rounded-xl text-sm font-bold text-slate-400 hover:border-indigo-200 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Add Lecture
-                      </button>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => addContentItem(section.id, 'Video')}
+                          className="py-3 border-2 border-dashed border-slate-100 rounded-xl text-sm font-bold text-slate-400 hover:border-indigo-200 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
+                        >
+                          <Video className="w-4 h-4" />
+                          Add Lecture
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => addContentItem(section.id, 'Quiz')}
+                          className="py-3 border-2 border-dashed border-slate-100 rounded-xl text-sm font-bold text-slate-400 hover:border-indigo-200 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
+                        >
+                          <HelpCircle className="w-4 h-4" />
+                          Add Quiz
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => addContentItem(section.id, 'Resource')}
+                          className="py-3 border-2 border-dashed border-slate-100 rounded-xl text-sm font-bold text-slate-400 hover:border-indigo-200 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
+                        >
+                          <FileText className="w-4 h-4" />
+                          Add Resource
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -258,12 +1116,25 @@ export const CourseCreator = () => {
                 className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm space-y-8"
               >
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-900 mb-2">Target Students</h2>
-                  <p className="text-slate-500">Define who this course is for to help students find the right content.</p>
+                  <h2 className="text-2xl font-bold text-slate-900 mb-2">What You'll Learn</h2>
+                  <p className="text-slate-500">These learning outcomes are synced with the landing page field.</p>
                 </div>
                 <div className="space-y-4">
-                  <label className="text-sm font-bold text-slate-700">What will students learn in your course?</label>
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="text-sm font-bold text-slate-700">What will students learn in your course?</label>
+                    <button
+                      type="button"
+                      onClick={generateAiCourseCopy}
+                      disabled={isGeneratingAi}
+                      className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {isGeneratingAi ? 'Generating...' : 'Generate with AI'}
+                    </button>
+                  </div>
                   <textarea 
+                    value={targetStudentsInput}
+                    onChange={(event) => setTargetStudentsInput(event.target.value)}
                     placeholder="Example: Build a full-stack application from scratch..."
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none min-h-[150px]"
                   />
@@ -290,8 +1161,26 @@ export const CourseCreator = () => {
                       <p className="text-xs text-slate-500">Public courses are searchable by everyone.</p>
                     </div>
                     <div className="flex bg-white p-1 rounded-lg border border-slate-200">
-                      <button className="px-3 py-1.5 text-xs font-bold bg-indigo-600 text-white rounded-md">Public</button>
-                      <button className="px-3 py-1.5 text-xs font-bold text-slate-600">Private</button>
+                      <button
+                        type="button"
+                        onClick={() => setVisibility('Public')}
+                        className={cn(
+                          'px-3 py-1.5 text-xs font-bold rounded-md',
+                          visibility === 'Public' ? 'bg-indigo-600 text-white' : 'text-slate-600',
+                        )}
+                      >
+                        Public
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVisibility('Private')}
+                        className={cn(
+                          'px-3 py-1.5 text-xs font-bold rounded-md',
+                          visibility === 'Private' ? 'bg-indigo-600 text-white' : 'text-slate-600',
+                        )}
+                      >
+                        Private
+                      </button>
                     </div>
                   </div>
                   <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl">
@@ -300,8 +1189,81 @@ export const CourseCreator = () => {
                       <p className="text-xs text-slate-500">Open for new students to join.</p>
                     </div>
                     <div className="flex bg-white p-1 rounded-lg border border-slate-200">
-                      <button className="px-3 py-1.5 text-xs font-bold bg-emerald-600 text-white rounded-md">Open</button>
-                      <button className="px-3 py-1.5 text-xs font-bold text-slate-600">Closed</button>
+                      <button
+                        type="button"
+                        onClick={() => setEnrollmentStatus('Open')}
+                        className={cn(
+                          'px-3 py-1.5 text-xs font-bold rounded-md',
+                          enrollmentStatus === 'Open' ? 'bg-emerald-600 text-white' : 'text-slate-600',
+                        )}
+                      >
+                        Open
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEnrollmentStatus('Closed')}
+                        className={cn(
+                          'px-3 py-1.5 text-xs font-bold rounded-md',
+                          enrollmentStatus === 'Closed' ? 'bg-emerald-600 text-white' : 'text-slate-600',
+                        )}
+                      >
+                        Closed
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-slate-50 rounded-xl border border-slate-100 space-y-6">
+                    <div>
+                      <h4 className="font-bold text-slate-900">Automated Messages</h4>
+                      <p className="text-xs text-slate-500">Send automatic emails to your students to keep them engaged.</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-700">Welcome Message</label>
+                      <p className="text-[11px] text-slate-500">Sent to students immediately after they enroll.</p>
+                      <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                        <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-1">
+                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                            <Bold className="w-3.5 h-3.5" />
+                          </button>
+                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                            <Italic className="w-3.5 h-3.5" />
+                          </button>
+                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                            <List className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <textarea
+                          value={welcomeMessage}
+                          onChange={(event) => setWelcomeMessage(event.target.value)}
+                          placeholder="e.g. Welcome to the course! I'm so excited to have you here..."
+                          className="w-full px-4 py-3 outline-none min-h-[130px] text-sm text-slate-700"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-700">Congratulations Message</label>
+                      <p className="text-[11px] text-slate-500">Sent to students when they complete all lessons in the course.</p>
+                      <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                        <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-1">
+                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                            <Bold className="w-3.5 h-3.5" />
+                          </button>
+                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                            <Italic className="w-3.5 h-3.5" />
+                          </button>
+                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                            <List className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <textarea
+                          value={congratulationsMessage}
+                          onChange={(event) => setCongratulationsMessage(event.target.value)}
+                          placeholder="e.g. Congratulations on finishing the course! You've done a great job..."
+                          className="w-full px-4 py-3 outline-none min-h-[130px] text-sm text-slate-700"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -310,6 +1272,45 @@ export const CourseCreator = () => {
           </AnimatePresence>
         </main>
       </div>
+      <AnimatePresence>
+        {deleteTarget ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 12, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.98 }}
+              className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+            >
+              <div className="mb-5 space-y-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-red-500">Confirm Delete</p>
+                <h3 className="text-xl font-bold text-slate-900">{deleteTarget.title}</h3>
+                <p className="text-sm leading-6 text-slate-500">{deleteTarget.message}</p>
+              </div>
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeDeleteDialog}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDelete}
+                  className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 };

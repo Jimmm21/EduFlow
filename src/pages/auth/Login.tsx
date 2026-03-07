@@ -1,26 +1,58 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Mail, Lock, Eye, EyeOff, ArrowRight, Github, Chrome } from 'lucide-react';
 import { motion } from 'motion/react';
+import { defaultRouteForRole, INITIAL_LOGIN_CREDENTIALS, useAuth } from '../../auth/AuthContext';
 
 export const LoginPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { login } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const resolveRedirectPath = (role: 'Admin' | 'Student') => {
+    const redirectParam = new URLSearchParams(location.search).get('redirect');
+    if (!redirectParam || !redirectParam.startsWith('/')) {
+      return defaultRouteForRole(role);
+    }
+
+    if (role === 'Student' && redirectParam.startsWith('/admin')) {
+      return defaultRouteForRole(role);
+    }
+
+    return redirectParam;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    // Simulate login
-    setTimeout(() => {
+    setError(null);
+
+    const result = await login(email, password);
+    if (!result.success || !result.user) {
+      setError(result.message ?? 'Unable to log in. Please try again.');
       setIsLoading(false);
-      navigate('/');
-    }, 1500);
+      return;
+    }
+
+    const nextPath = resolveRedirectPath(result.user.role);
+    setIsLoading(false);
+    navigate(nextPath, { replace: true });
+  };
+
+  const fillInitialCredential = (credential: (typeof INITIAL_LOGIN_CREDENTIALS)[number]) => {
+    setEmail(credential.email);
+    setPassword(credential.password);
+    setError(null);
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="max-w-md w-full space-y-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/50"
@@ -42,10 +74,12 @@ export const LoginPage = () => {
               <label className="text-sm font-bold text-slate-700 ml-1">Email Address</label>
               <div className="relative">
                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input 
-                  type="email" 
+                <input
+                  type="email"
                   required
                   placeholder="name@example.com"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
                   className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
                 />
               </div>
@@ -60,13 +94,15 @@ export const LoginPage = () => {
               </div>
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input 
-                  type={showPassword ? "text" : "password"} 
+                <input
+                  type={showPassword ? 'text' : 'password'}
                   required
-                  placeholder="••••••••"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="********"
                   className="w-full pl-12 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
                 />
-                <button 
+                <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
@@ -78,15 +114,19 @@ export const LoginPage = () => {
           </div>
 
           <div className="flex items-center gap-3 ml-1">
-            <input 
-              type="checkbox" 
+            <input
+              type="checkbox"
               id="remember"
-              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" 
+              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
             />
             <label htmlFor="remember" className="text-sm text-slate-600 cursor-pointer">Remember me for 30 days</label>
           </div>
 
-          <button 
+          {error ? (
+            <p className="text-sm text-red-600 font-medium ml-1">{error}</p>
+          ) : null}
+
+          <button
             type="submit"
             disabled={isLoading}
             className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed active:scale-[0.98]"
@@ -99,6 +139,21 @@ export const LoginPage = () => {
               </>
             )}
           </button>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Initial Credentials</p>
+            {INITIAL_LOGIN_CREDENTIALS.map((credential) => (
+              <button
+                key={credential.email}
+                type="button"
+                onClick={() => fillInitialCredential(credential)}
+                className="w-full text-left p-3 rounded-lg bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40 transition-colors"
+              >
+                <p className="text-sm font-bold text-slate-800">{credential.role}</p>
+                <p className="text-xs text-slate-500">{credential.email} / {credential.password}</p>
+              </button>
+            ))}
+          </div>
         </form>
 
         <div className="relative">

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Users, DollarSign, Star, Plus, MoreVertical, ExternalLink } from 'lucide-react';
-import { MOCK_COURSES, MOCK_USER } from '../../mockData';
+import { Users, Star, Plus, MoreVertical, ExternalLink, ClipboardList } from 'lucide-react';
+import { MOCK_COURSES, MOCK_ENROLLMENT_REQUESTS } from '../../mockData';
 import { cn } from '../../utils';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
+import { useAuth } from '../../auth/AuthContext';
 
 const StatCard = ({ icon: Icon, label, value, trend, trendType }: any) => (
   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -26,11 +27,15 @@ const StatCard = ({ icon: Icon, label, value, trend, trendType }: any) => (
 );
 
 export const AdminDashboard = () => {
+  const { user } = useAuth();
+  const pendingEnrollments = MOCK_ENROLLMENT_REQUESTS.filter((request) => request.status === 'Pending').length;
+  const displayName = user?.name.trim() ? user.name.split(/\s+/)[0] : 'Admin';
+
   return (
     <div className="space-y-8">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Welcome back, {MOCK_USER.name.split(' ')[0]}</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Welcome back, {displayName}</h1>
           <p className="text-slate-500">Check your course stats and manage your students.</p>
         </div>
         <Link 
@@ -42,7 +47,7 @@ export const AdminDashboard = () => {
         </Link>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         <StatCard 
           icon={Users} 
           label="Total Enrollments" 
@@ -60,12 +65,19 @@ export const AdminDashboard = () => {
           label="Average Rating" 
           value="4.8" 
         />
+        <StatCard
+          icon={ClipboardList}
+          label="Pending Enrollments"
+          value={pendingEnrollments.toString()}
+        />
       </div>
 
       <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-6 border-b border-slate-100 flex items-center justify-between">
           <h2 className="font-bold text-slate-900">My Courses</h2>
-          <button className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">View all</button>
+          <Link to="/admin/courses" className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">
+            View all
+          </Link>
         </div>
         <div className="divide-y divide-slate-100">
           {MOCK_COURSES.map((course) => (
@@ -75,15 +87,17 @@ export const AdminDashboard = () => {
               animate={{ opacity: 1, y: 0 }}
               className="p-6 flex items-center gap-6 hover:bg-slate-50 transition-colors group"
             >
-              <div className="w-24 h-16 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0">
-                <img src={course.image} alt={course.title} className="w-full h-full object-cover" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{course.title}</h3>
-                <p className="text-sm text-slate-500">
-                  Published on {course.lastUpdated} • {course.studentsCount.toLocaleString()} Students
-                </p>
-              </div>
+              <Link to={`/admin/courses/${course.id}/overview`} className="flex flex-1 min-w-0 items-center gap-6">
+                <div className="w-24 h-16 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0">
+                  <img src={course.image} alt={course.title} className="w-full h-full object-cover" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{course.title}</h3>
+                  <p className="text-sm text-slate-500">
+                    Published on {course.lastUpdated} • {course.studentsCount.toLocaleString()} Students
+                  </p>
+                </div>
+              </Link>
               <div className="flex items-center gap-4">
                 <span className={cn(
                   "text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md",

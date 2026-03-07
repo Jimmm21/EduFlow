@@ -1,10 +1,31 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Play, Star, Clock, Users, ChevronRight, ArrowRight } from 'lucide-react';
 import { MOCK_COURSES } from '../../mockData';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
+import { fetchPublicCourses } from '../../lib/courseApi';
+import type { Course } from '../../types';
 
 export const StudentHome = () => {
+  const [recommendedCourses, setRecommendedCourses] = useState<Course[]>(
+    MOCK_COURSES.filter((course) => course.status === 'Published' && course.visibility === 'Public'),
+  );
+
+  useEffect(() => {
+    const loadCourses = async () => {
+      try {
+        const courses = await fetchPublicCourses();
+        setRecommendedCourses(courses);
+      } catch {
+        setRecommendedCourses(
+          MOCK_COURSES.filter((course) => course.status === 'Published' && course.visibility === 'Public'),
+        );
+      }
+    };
+
+    loadCourses();
+  }, []);
+
   return (
     <div className="space-y-16">
       <section className="relative h-[500px] rounded-3xl overflow-hidden bg-slate-900 flex items-center px-12">
@@ -73,7 +94,7 @@ export const StudentHome = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {MOCK_COURSES.filter(c => c.status === 'Published').map((course, idx) => (
+          {recommendedCourses.slice(0, 3).map((course, idx) => (
             <motion.div 
               key={course.id}
               initial={{ opacity: 0, y: 20 }}

@@ -1,32 +1,50 @@
 import React from 'react';
-import { LayoutDashboard, BookOpen, BarChart3, MessageSquare, Settings, HelpCircle, LogOut, Moon, Sun } from 'lucide-react';
+import { LayoutDashboard, BookOpen, BarChart3, ClipboardList, Shield, UserCircle2, LogOut, Moon, GraduationCap } from 'lucide-react';
 import { cn } from '../utils';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/admin' },
   { icon: BookOpen, label: 'Courses', path: '/admin/courses' },
   { icon: BarChart3, label: 'Performance', path: '/admin/performance' },
-  { icon: MessageSquare, label: 'Communication', path: '/admin/communication' },
-  { icon: Settings, label: 'Tools', path: '/admin/tools' },
-  { icon: HelpCircle, label: 'Resources', path: '/admin/resources' },
+  { icon: ClipboardList, label: 'Enrollment List', path: '/admin/enrollments' },
+  { icon: Shield, label: 'Admin', path: '/admin/admins' },
+  { icon: UserCircle2, label: 'Profile', path: '/admin/profile' },
 ];
 
 export const Sidebar = () => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login', { replace: true });
+  };
 
   return (
     <aside className="w-64 border-r border-slate-200 bg-white h-screen flex flex-col sticky top-0">
-      <div className="p-6 flex items-center gap-3">
-        <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-          <BookOpen className="text-white w-5 h-5" />
+      <div className="p-6 space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+            <BookOpen className="text-white w-5 h-5" />
+          </div>
+          <span className="font-bold text-xl tracking-tight text-slate-900">EduFlow</span>
         </div>
-        <span className="font-bold text-xl tracking-tight text-slate-900">EduFlow</span>
+        {user ? (
+          <div className="px-1">
+            <p className="text-sm font-semibold text-slate-800">{user.name}</p>
+            <p className="text-xs text-slate-500">{user.email}</p>
+          </div>
+        ) : null}
       </div>
 
       <nav className="flex-1 px-4 space-y-1">
         {navItems.map((item) => {
-          const isActive = location.pathname === item.path;
+          const isActive = item.path === '/admin/courses'
+            ? location.pathname.startsWith('/admin/courses')
+            : location.pathname === item.path;
           return (
             <Link
               key={item.label}
@@ -50,10 +68,18 @@ export const Sidebar = () => {
           <Moon className="w-4 h-4" />
           Toggle Theme
         </button>
-        <Link to="/" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 w-full">
-          <LogOut className="w-4 h-4" />
-          Switch to Student
+        <Link to="/" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 w-full">
+          <GraduationCap className="w-4 h-4" />
+          Student View
         </Link>
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 w-full"
+        >
+          <LogOut className="w-4 h-4" />
+          Logout
+        </button>
       </div>
     </aside>
   );
