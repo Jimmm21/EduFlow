@@ -87,6 +87,9 @@ def ensure_course_tables_exist() -> None:
           status TEXT NOT NULL CHECK (status IN ('Draft', 'Published')) DEFAULT 'Draft',
           enrollment_status TEXT NOT NULL CHECK (enrollment_status IN ('Open', 'Closed')) DEFAULT 'Open',
           visibility TEXT NOT NULL CHECK (visibility IN ('Public', 'Private')) DEFAULT 'Public',
+          welcome_message TEXT NOT NULL DEFAULT '',
+          reminder_message TEXT NOT NULL DEFAULT '',
+          congratulations_message TEXT NOT NULL DEFAULT '',
           students_count INTEGER NOT NULL DEFAULT 0 CHECK (students_count >= 0),
           rating NUMERIC(2, 1) NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
           last_updated DATE NOT NULL DEFAULT CURRENT_DATE,
@@ -95,6 +98,9 @@ def ensure_course_tables_exist() -> None:
         );
         """,
       )
+      cursor.execute("ALTER TABLE courses ADD COLUMN IF NOT EXISTS welcome_message TEXT NOT NULL DEFAULT '';")
+      cursor.execute("ALTER TABLE courses ADD COLUMN IF NOT EXISTS reminder_message TEXT NOT NULL DEFAULT '';")
+      cursor.execute("ALTER TABLE courses ADD COLUMN IF NOT EXISTS congratulations_message TEXT NOT NULL DEFAULT '';")
       cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS course_sections (

@@ -10,10 +10,13 @@ from fastapi import HTTPException, status
 
 from ..config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TIMEOUT_SECONDS, YOUTUBE_API_KEY
 from ..schemas import (
+  GenerateAutomatedMessagesInput,
+  GenerateAutomatedMessagesResponse,
   GenerateCourseCopyInput,
   GenerateCourseCopyResponse,
   GenerateQuizFromVideoInput,
   GenerateQuizFromVideoResponse,
+  GeneratedAutomatedMessages,
   GeneratedCourseCopy,
   GeneratedQuizAnswer,
   GeneratedQuizPayload,
@@ -242,6 +245,148 @@ def generate_course_copy(payload: GenerateCourseCopyInput) -> GenerateCourseCopy
     )
 
   return GenerateCourseCopyResponse(success=True, content=ai_content)
+
+
+def build_fallback_automated_messages(payload: GenerateAutomatedMessagesInput) -> GeneratedAutomatedMessages:
+  title = payload.title.strip()
+  level = payload.level.lower()
+  category = payload.category.lower()
+  language = payload.language.strip() or "English"
+  topic_words = tokenize_title(payload.description) or tokenize_title(title)
+  topic_phrase = ", ".join(topic_words[:3]) if topic_words else title.lower()
+
+  welcome_message = (
+    f"Welcome to {title}. You are about to build practical {category} skills at a {level} level in {language}. "
+    f"Start with your first lesson now, and focus on one concrete outcome around {topic_phrase} today."
+  )
+  reminder_message = (
+    f"Quick reminder for {title}: steady progress beats long gaps. Complete your next lesson, then write one short "
+    "note about what you learned so your momentum stays strong."
+  )
+  congratulations_message = (
+    f"Congratulations on completing {title}! You finished the full learning path and turned concepts into practical "
+    f"results. Keep growing by applying your {category} skills in a new mini-project this week."
+  )
+
+  return GeneratedAutomatedMessages(
+    welcomeMessage=welcome_message,
+    reminderMessage=reminder_message,
+    congratulationsMessage=congratulations_message,
+  )
+
+
+def call_openai_automated_messages(
+  payload: GenerateAutomatedMessagesInput,
+) -> tuple[GeneratedAutomatedMessages | None, str | None]:
+  if not OPENAI_API_KEY:
+    return None, "OPENAI_API_KEY is not configured."
+
+  description = re.sub(r"\s+", " ", payload.description.strip())
+  if len(description) > 1200:
+    description = description[:1200]
+
+  system_prompt = (
+    "You are an instructional copywriter for online courses. Return valid JSON only with keys "
+    '"welcomeMessage", "reminderMessage", and "congratulationsMessage".'
+  )
+  user_prompt = (
+    "Generate automated student messages for a course.\n"
+    f"Title: {payload.title.strip()}\n"
+    f"Category: {payload.category}\n"
+    f"Level: {payload.level}\n"
+    f"Language: {payload.language}\n"
+    f"Course description context: {description or 'Not provided.'}\n"
+    "Constraints:\n"
+    "- Output strict JSON only.\n"
+    "- Each message must be 2-4 sentences and practical, warm, and direct.\n"
+    "- welcomeMessage: sent when a student starts the course.\n"
+    "- reminderMessage: sent while a student is in progress to encourage continuation.\n"
+    "- congratulationsMessage: sent once the student completes the course.\n"
+    "- Avoid placeholders like [Name] or <student>.\n"
+    "- Keep wording concrete and action-oriented.\n"
+  )
+
+  request_body = {
+    "model": OPENAI_MODEL,
+    "response_format": {"type": "json_object"},
+    "messages": [
+      {"role": "system", "content": system_prompt},
+      {"role": "user", "content": user_prompt},
+    ],
+    "temperature": 0.6,
+  }
+
+  request = urllib.request.Request(
+    "https://api.openai.com/v1/chat/completions",
+    data=json.dumps(request_body).encode("utf-8"),
+    headers={
+      "Authorization": f"Bearer {OPENAI_API_KEY}",
+      "Content-Type": "application/json",
+    },
+    method="POST",
+  )
+
+  try:
+    with urllib.request.urlopen(request, timeout=OPENAI_TIMEOUT_SECONDS) as response:
+      response_text = response.read().decode("utf-8")
+  except urllib.error.HTTPError as error:
+    return None, extract_openai_error_message(error)
+  except (urllib.error.URLError, TimeoutError):
+    return None, "OpenAI service is currently unreachable."
+
+  try:
+    parsed_response = json.loads(response_text)
+    content = parsed_response["choices"][0]["message"]["content"]
+  except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+    return None, "OpenAI returned an unexpected response format."
+
+  if not isinstance(content, str):
+    return None, "OpenAI returned an empty response."
+
+  parsed_content = parse_json_payload(content)
+  if not parsed_content:
+    return None, "OpenAI response could not be parsed."
+
+  welcome_message = parsed_content.get("welcomeMessage")
+  reminder_message = parsed_content.get("reminderMessage")
+  congratulations_message = parsed_content.get("congratulationsMessage")
+
+  if not isinstance(welcome_message, str) or not welcome_message.strip():
+    return None, "OpenAI response did not include a valid welcome message."
+  if not isinstance(reminder_message, str) or not reminder_message.strip():
+    return None, "OpenAI response did not include a valid reminder message."
+  if not isinstance(congratulations_message, str) or not congratulations_message.strip():
+    return None, "OpenAI response did not include a valid congratulations message."
+
+  return (
+    GeneratedAutomatedMessages(
+      welcomeMessage=welcome_message.strip(),
+      reminderMessage=reminder_message.strip(),
+      congratulationsMessage=congratulations_message.strip(),
+    ),
+    None,
+  )
+
+
+def generate_automated_messages(
+  payload: GenerateAutomatedMessagesInput,
+) -> GenerateAutomatedMessagesResponse:
+  title = payload.title.strip()
+  if not title:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Course title is required.")
+
+  ai_messages, ai_error = call_openai_automated_messages(payload)
+  if not ai_messages:
+    fallback_messages = build_fallback_automated_messages(payload)
+    return GenerateAutomatedMessagesResponse(
+      success=True,
+      messages=fallback_messages,
+      message=f"Used fallback automated messages generator. Reason: {ai_error}"
+      if ai_error
+      else "Used fallback automated messages generator.",
+    )
+
+  return GenerateAutomatedMessagesResponse(success=True, messages=ai_messages)
 
 
 def extract_youtube_video_id(raw_value: str) -> str | None:

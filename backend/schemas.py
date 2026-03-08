@@ -54,6 +54,9 @@ class CreateCourseInput(BaseModel):
   status: Literal["Draft", "Published"] = "Draft"
   enrollmentStatus: Literal["Open", "Closed"] = "Open"
   visibility: Literal["Public", "Private"] = "Public"
+  welcomeMessage: str = Field(default="", max_length=5000)
+  reminderMessage: str = Field(default="", max_length=5000)
+  congratulationsMessage: str = Field(default="", max_length=5000)
   sections: list[SectionInput] = Field(default_factory=list)
 
 
@@ -108,6 +111,12 @@ class EnrollmentRequestResponse(BaseModel):
   success: bool
   request: dict[str, Any] | None = None
   requests: list[dict[str, Any]] | None = None
+  message: str | None = None
+
+
+class StudentEnrollmentResponse(BaseModel):
+  success: bool
+  enrollments: list[dict[str, Any]] | None = None
   message: str | None = None
 
 
@@ -224,6 +233,26 @@ class GeneratedCourseCopy(BaseModel):
 class GenerateCourseCopyResponse(BaseModel):
   success: bool
   content: GeneratedCourseCopy | None = None
+  message: str | None = None
+
+
+class GenerateAutomatedMessagesInput(BaseModel):
+  title: str = Field(min_length=3, max_length=120)
+  language: str = Field(default="English", max_length=100)
+  level: Literal["Beginner", "Intermediate", "Expert", "All Levels"] = "Beginner"
+  category: Literal["Development", "Business", "IT & Software", "Design", "Marketing", "Photography"] = "Development"
+  description: str = Field(default="", max_length=5000)
+
+
+class GeneratedAutomatedMessages(BaseModel):
+  welcomeMessage: str = Field(min_length=1)
+  reminderMessage: str = Field(min_length=1)
+  congratulationsMessage: str = Field(min_length=1)
+
+
+class GenerateAutomatedMessagesResponse(BaseModel):
+  success: bool
+  messages: GeneratedAutomatedMessages | None = None
   message: str | None = None
 
 

@@ -1,4 +1,5 @@
 import type {
+  AdminStudentEnrollment,
   AdminPerformanceMetrics,
   AdminPopularCourseMetric,
   AdminTopStudentMetric,
@@ -196,6 +197,9 @@ const normalizeCourse = (value: unknown): Course | null => {
     status: record.status === 'Published' ? 'Published' : 'Draft',
     enrollmentStatus: record.enrollmentStatus === 'Closed' ? 'Closed' : 'Open',
     visibility: record.visibility === 'Private' ? 'Private' : 'Public',
+    welcomeMessage: typeof record.welcomeMessage === 'string' ? record.welcomeMessage : undefined,
+    reminderMessage: typeof record.reminderMessage === 'string' ? record.reminderMessage : undefined,
+    congratulationsMessage: typeof record.congratulationsMessage === 'string' ? record.congratulationsMessage : undefined,
     studentsCount: typeof record.studentsCount === 'number' ? record.studentsCount : 0,
     rating: typeof record.rating === 'number' ? record.rating : 0,
     lastUpdated: typeof record.lastUpdated === 'string' ? record.lastUpdated : '',
@@ -243,6 +247,39 @@ const normalizeEnrollmentRequest = (value: unknown): EnrollmentRequest | null =>
     requestedAt: record.requestedAt,
     status: record.status,
     note: typeof record.note === 'string' ? record.note : undefined,
+  };
+};
+
+const normalizeAdminStudentEnrollment = (value: unknown): AdminStudentEnrollment | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== 'string' ||
+    typeof record.courseId !== 'string' ||
+    typeof record.courseTitle !== 'string' ||
+    typeof record.studentId !== 'string' ||
+    typeof record.studentName !== 'string' ||
+    typeof record.studentEmail !== 'string' ||
+    typeof record.enrolledAt !== 'string' ||
+    typeof record.progress !== 'number' ||
+    !isLearningStatus(record.learningStatus)
+  ) {
+    return null;
+  }
+
+  return {
+    id: record.id,
+    courseId: record.courseId,
+    courseTitle: record.courseTitle,
+    studentId: record.studentId,
+    studentName: record.studentName,
+    studentEmail: record.studentEmail,
+    enrolledAt: record.enrolledAt,
+    progress: record.progress,
+    learningStatus: record.learningStatus,
   };
 };
 
@@ -625,6 +662,43 @@ export const fetchAdminEnrollmentRequests = async (courseId?: string) => {
   return record.requests
     .map(normalizeEnrollmentRequest)
     .filter((request): request is EnrollmentRequest => request !== null);
+};
+
+export const fetchAdminStudentEnrollments = async (courseId?: string) => {
+  const query = courseId ? `?course_id=${encodeURIComponent(courseId)}` : '';
+  const response = await fetch(`${COURSE_API_BASE_URL}/api/admin/student-enrollments${query}`);
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(extractApiMessage(payload) ?? 'Unable to fetch enrolled students.');
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return [] as AdminStudentEnrollment[];
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (record.success !== true || !Array.isArray(record.enrollments)) {
+    return [] as AdminStudentEnrollment[];
+  }
+
+  return record.enrollments
+    .map(normalizeAdminStudentEnrollment)
+    .filter((enrollment): enrollment is AdminStudentEnrollment => enrollment !== null);
+};
+
+export const removeAdminStudentEnrollment = async (enrollmentId: string) => {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/api/admin/student-enrollments/${encodeURIComponent(enrollmentId)}`,
+    { method: 'DELETE' },
+  );
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(extractApiMessage(payload) ?? 'Unable to remove student from the course.');
+  }
+
+  return extractApiMessage(payload) ?? 'Student removed from the course.';
 };
 
 export const updateAdminEnrollmentRequest = async (

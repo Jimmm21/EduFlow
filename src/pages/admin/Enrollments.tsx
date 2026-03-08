@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Filter, XCircle, Users } from 'lucide-react';
+import { CheckCircle2, Filter, XCircle } from 'lucide-react';
 import { MOCK_COURSES, MOCK_ENROLLMENT_REQUESTS } from '../../mockData';
 import type { Course, EnrollmentRequest, EnrollmentRequestStatus } from '../../types';
 import { cn } from '../../utils';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import {
   fetchAdminCourses,
   fetchAdminEnrollmentRequests,
@@ -21,6 +22,11 @@ export const AdminEnrollments = () => {
   const [requests, setRequests] = useState<EnrollmentRequest[]>(MOCK_ENROLLMENT_REQUESTS);
   const [isLoading, setIsLoading] = useState(true);
   const [actionRequestId, setActionRequestId] = useState<string | null>(null);
+  const [confirmationAction, setConfirmationAction] = useState<{
+    requestId: string;
+    status: 'Accepted' | 'Rejected';
+    studentName: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -48,24 +54,50 @@ export const AdminEnrollments = () => {
   }, []);
 
   const filteredRequests = useMemo(() => {
+    const visibleRequests = requests.filter((request) => request.status === 'Pending');
+
     if (selectedCourseId === 'all') {
-      return requests;
+      return visibleRequests;
     }
 
-    return requests.filter((request) => request.courseId === selectedCourseId);
+    return visibleRequests.filter((request) => request.courseId === selectedCourseId);
   }, [requests, selectedCourseId]);
 
   const counts = useMemo(
     () => ({
       total: filteredRequests.length,
       pending: filteredRequests.filter((request) => request.status === 'Pending').length,
-      accepted: filteredRequests.filter((request) => request.status === 'Accepted').length,
-      rejected: filteredRequests.filter((request) => request.status === 'Rejected').length,
+      rejected: requests.filter((request) => request.status === 'Rejected').length,
+      movedToStudentList: requests.filter((request) => request.status === 'Accepted').length,
     }),
-    [filteredRequests],
+    [filteredRequests, requests],
   );
 
-  const updateRequestStatus = async (requestId: string, status: EnrollmentRequestStatus) => {
+  const openRequestStatusConfirmation = (requestId: string, status: 'Accepted' | 'Rejected') => {
+    const currentRequest = requests.find((request) => request.id === requestId);
+    if (!currentRequest) {
+      setError('Enrollment request not found.');
+      return;
+    }
+
+    if (currentRequest.status !== 'Pending') {
+      setError('Only pending requests can be accepted or rejected.');
+      return;
+    }
+
+    setConfirmationAction({
+      requestId,
+      status,
+      studentName: currentRequest.studentName,
+    });
+  };
+
+  const updateRequestStatus = async () => {
+    if (!confirmationAction) {
+      return;
+    }
+
+    const { requestId, status } = confirmationAction;
     setActionRequestId(requestId);
     setError(null);
 
@@ -76,6 +108,7 @@ export const AdminEnrollments = () => {
           request.id === requestId ? updatedRequest : request,
         ),
       );
+      setConfirmationAction(null);
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : 'Unable to update enrollment request.');
     } finally {
@@ -112,40 +145,6 @@ export const AdminEnrollments = () => {
 
       {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}
 
-      <section className="grid grid-cols-1 gap-5 md:grid-cols-3">
-        {courses.map((course) => {
-          const courseRequestCount = requests.filter((request) => request.courseId === course.id).length;
-          const pendingCount = requests.filter(
-            (request) => request.courseId === course.id && request.status === 'Pending',
-          ).length;
-
-          return (
-            <button
-              key={course.id}
-              type="button"
-              onClick={() => setSelectedCourseId(course.id)}
-              className={cn(
-                'rounded-2xl border bg-white p-5 text-left transition-colors',
-                selectedCourseId === course.id
-                  ? 'border-indigo-300 ring-4 ring-indigo-100'
-                  : 'border-slate-200 hover:border-slate-300',
-              )}
-            >
-              <div className="mb-4 flex items-start justify-between gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100">
-                  <Users className="h-5 w-5 text-slate-600" />
-                </div>
-                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                  {courseRequestCount} requests
-                </span>
-              </div>
-              <h2 className="text-lg font-semibold text-slate-900">{course.title}</h2>
-              <p className="mt-2 text-sm text-slate-500">{pendingCount} pending approvals</p>
-            </button>
-          );
-        })}
-      </section>
-
       <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <article className="rounded-2xl border border-slate-200 bg-white p-5">
           <p className="mb-2 text-sm text-slate-500">Visible Requests</p>
@@ -156,8 +155,8 @@ export const AdminEnrollments = () => {
           <p className="text-4xl font-bold text-amber-600">{counts.pending}</p>
         </article>
         <article className="rounded-2xl border border-slate-200 bg-white p-5">
-          <p className="mb-2 text-sm text-slate-500">Accepted</p>
-          <p className="text-4xl font-bold text-emerald-600">{counts.accepted}</p>
+          <p className="mb-2 text-sm text-slate-500">Moved to Student List</p>
+          <p className="text-4xl font-bold text-emerald-600">{counts.movedToStudentList}</p>
         </article>
         <article className="rounded-2xl border border-slate-200 bg-white p-5">
           <p className="mb-2 text-sm text-slate-500">Rejected</p>
@@ -181,8 +180,8 @@ export const AdminEnrollments = () => {
           </div>
         ) : filteredRequests.length === 0 ? (
           <div className="px-6 py-12 text-center">
-            <p className="mb-2 text-lg font-semibold text-slate-900">No enrollment requests found.</p>
-            <p className="text-sm text-slate-500">Choose another course or wait for new student applications.</p>
+            <p className="mb-2 text-lg font-semibold text-slate-900">No pending requests found.</p>
+            <p className="text-sm text-slate-500">Accepted requests move to Student List and rejected requests are hidden.</p>
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
@@ -211,7 +210,7 @@ export const AdminEnrollments = () => {
                     <div className="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
-                        onClick={() => updateRequestStatus(request.id, 'Accepted')}
+                        onClick={() => openRequestStatusConfirmation(request.id, 'Accepted')}
                         disabled={isActing}
                         className={cn(
                           'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-70',
@@ -225,7 +224,7 @@ export const AdminEnrollments = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => updateRequestStatus(request.id, 'Rejected')}
+                        onClick={() => openRequestStatusConfirmation(request.id, 'Rejected')}
                         disabled={isActing}
                         className={cn(
                           'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-70',
@@ -245,6 +244,28 @@ export const AdminEnrollments = () => {
           </div>
         )}
       </section>
+
+      <ConfirmDialog
+        isOpen={confirmationAction !== null}
+        badge="Confirm Action"
+        title={
+          confirmationAction?.status === 'Accepted'
+            ? `Are you sure you want to accept the student ${confirmationAction.studentName}?`
+            : `Are you sure you want to reject the student ${confirmationAction?.studentName ?? ''}?`
+        }
+        description="This will immediately update the student's enrollment status."
+        tone={confirmationAction?.status === 'Rejected' ? 'danger' : 'primary'}
+        confirmLabel={confirmationAction?.status === 'Accepted' ? 'Accept Student' : 'Reject Student'}
+        confirmingLabel={confirmationAction?.status === 'Accepted' ? 'Accepting...' : 'Rejecting...'}
+        isConfirming={confirmationAction ? actionRequestId === confirmationAction.requestId : false}
+        onCancel={() => {
+          if (actionRequestId) {
+            return;
+          }
+          setConfirmationAction(null);
+        }}
+        onConfirm={updateRequestStatus}
+      />
     </div>
   );
 };

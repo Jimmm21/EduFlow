@@ -309,10 +309,17 @@ export const CoursePlayer = () => {
     [course.sections],
   );
   const completedLectureIdSet = new Set(course.completedLectureIds ?? []);
+  const totalLectureCount = course.sections.reduce((count, section) => count + section.lectures.length, 0);
+  const completedLectureCount = Array.from(completedLectureIdSet).filter((lectureId) =>
+    course.sections.some((section) => section.lectures.some((lecture) => lecture.id === lectureId)),
+  ).length;
   const answeredQuizCount = Object.keys(quizSelections).length;
   const canStartRetake = Boolean(quizAttempt) && !isRetakingQuiz;
   const quizAttempts = activeLectureQuiz?.attempts ?? (quizAttempt ? [quizAttempt] : []);
-  const isCourseCompleted = course.learningStatus === 'completed' || (course.progress ?? 0) >= 100;
+  const isCourseCompleted =
+    course.learningStatus === 'completed'
+    || (course.progress ?? 0) >= 100
+    || (totalLectureCount > 0 && completedLectureCount >= totalLectureCount);
   const hasSubmittedRating = typeof course.studentRating === 'number' && course.studentRating >= 1 && course.studentRating <= 5;
   const displayedRating = hasSubmittedRating ? (course.studentRating ?? 0) : selectedRating;
   const answeredQuizItems = (activeLectureQuiz?.questions ?? [])
@@ -575,6 +582,85 @@ export const CoursePlayer = () => {
                 <button className="pb-4 text-sm font-bold text-slate-400 transition-colors hover:text-white">Notes</button>
                 <button className="pb-4 text-sm font-bold text-slate-400 transition-colors hover:text-white">Reviews</button>
               </div>
+            ) : null}
+
+            {isCourseCompleted && user?.role === 'Student' ? (
+              <motion.div
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 p-6"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-400/20">
+                    <Trophy className="h-5 w-5 text-emerald-300" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold uppercase tracking-wider text-emerald-200">Course Finished</p>
+                    <h3 className="mt-1 text-2xl font-bold text-emerald-100">You did well. The course is finished.</h3>
+                    <p className="mt-2 whitespace-pre-line text-sm text-emerald-100/90">
+                      {course.congratulationsMessage?.trim() || 'Excellent work finishing all sections. Keep building with what you learned.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-6 rounded-xl border border-white/10 bg-slate-950/30 p-4">
+                  <h4 className="text-base font-bold text-white">Rate this course</h4>
+                  <p className="mt-1 text-sm text-slate-300">
+                    Your rating helps improve course quality for future students.
+                  </p>
+
+                  <div className="mt-4 flex items-center gap-2">
+                    {Array.from({ length: 5 }, (_, starIndex) => {
+                      const starValue = starIndex + 1;
+                      const isFilled = starValue <= displayedRating;
+
+                      return (
+                        <button
+                          key={starValue}
+                          type="button"
+                          disabled={isSubmittingRating || hasSubmittedRating}
+                          onClick={() => {
+                            setSelectedRating(starValue);
+                            setRatingError(null);
+                            setRatingMessage(null);
+                          }}
+                          className="rounded-lg p-1 transition-transform hover:scale-110 disabled:cursor-not-allowed disabled:opacity-70"
+                          aria-label={`Rate ${starValue} star${starValue === 1 ? '' : 's'}`}
+                        >
+                          <Star
+                            className={cn(
+                              'h-7 w-7',
+                              isFilled ? 'fill-amber-400 text-amber-400' : 'text-slate-500',
+                            )}
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleSubmitCourseRating}
+                      disabled={isSubmittingRating || hasSubmittedRating || selectedRating < 1}
+                      className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isSubmittingRating ? 'Saving...' : hasSubmittedRating ? 'Rating Submitted' : 'Save Rating'}
+                    </button>
+                    {typeof course.studentRating === 'number' ? (
+                      <p className="text-sm text-slate-300">
+                        Your current rating: <span className="font-semibold text-amber-300">{course.studentRating}/5</span>
+                      </p>
+                    ) : null}
+                  </div>
+                  <p className="mt-3 text-xs text-slate-400">
+                    Ratings are one-time submissions and cannot be changed after saving.
+                  </p>
+
+                  {ratingError ? <p className="mt-3 text-sm font-medium text-red-300">{ratingError}</p> : null}
+                  {ratingMessage ? <p className="mt-3 text-sm font-medium text-emerald-300">{ratingMessage}</p> : null}
+                </div>
+              </motion.div>
             ) : null}
 
             <div className="space-y-6">
@@ -953,66 +1039,6 @@ export const CoursePlayer = () => {
                 </>
               )}
 
-              {isCourseCompleted && user?.role === 'Student' ? (
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-                  <p className="text-xs font-bold uppercase tracking-wider text-indigo-300">Course Completed</p>
-                  <h3 className="mt-2 text-xl font-bold text-white">Rate this course</h3>
-                  <p className="mt-1 text-sm text-slate-300">
-                    Your rating helps improve course quality for future students.
-                  </p>
-
-                  <div className="mt-4 flex items-center gap-2">
-                    {Array.from({ length: 5 }, (_, starIndex) => {
-                      const starValue = starIndex + 1;
-                      const isFilled = starValue <= displayedRating;
-
-                      return (
-                        <button
-                          key={starValue}
-                          type="button"
-                          disabled={isSubmittingRating || hasSubmittedRating}
-                          onClick={() => {
-                            setSelectedRating(starValue);
-                            setRatingError(null);
-                            setRatingMessage(null);
-                          }}
-                          className="rounded-lg p-1 transition-transform hover:scale-110 disabled:cursor-not-allowed disabled:opacity-70"
-                          aria-label={`Rate ${starValue} star${starValue === 1 ? '' : 's'}`}
-                        >
-                          <Star
-                            className={cn(
-                              'h-7 w-7',
-                              isFilled ? 'fill-amber-400 text-amber-400' : 'text-slate-500',
-                            )}
-                          />
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={handleSubmitCourseRating}
-                      disabled={isSubmittingRating || hasSubmittedRating || selectedRating < 1}
-                      className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {isSubmittingRating ? 'Saving...' : hasSubmittedRating ? 'Rating Submitted' : 'Save Rating'}
-                    </button>
-                    {typeof course.studentRating === 'number' ? (
-                      <p className="text-sm text-slate-300">
-                        Your current rating: <span className="font-semibold text-amber-300">{course.studentRating}/5</span>
-                      </p>
-                    ) : null}
-                  </div>
-                  <p className="mt-3 text-xs text-slate-400">
-                    Ratings are one-time submissions and cannot be changed after saving.
-                  </p>
-
-                  {ratingError ? <p className="mt-3 text-sm font-medium text-red-300">{ratingError}</p> : null}
-                  {ratingMessage ? <p className="mt-3 text-sm font-medium text-emerald-300">{ratingMessage}</p> : null}
-                </div>
-              ) : null}
             </div>
           </div>
         </main>

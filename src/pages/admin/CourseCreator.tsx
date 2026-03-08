@@ -135,10 +135,49 @@ const parseGeneratedCourseContent = (
   };
 };
 
+const parseGeneratedAutomatedMessages = (
+  payload: unknown,
+): {
+  welcomeMessage: string;
+  reminderMessage: string;
+  congratulationsMessage: string;
+  message?: string;
+} | null => {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (record.success !== true || !record.messages || typeof record.messages !== 'object') {
+    return null;
+  }
+
+  const messages = record.messages as Record<string, unknown>;
+  const welcomeMessage =
+    typeof messages.welcomeMessage === 'string' ? messages.welcomeMessage.trim() : '';
+  const reminderMessage =
+    typeof messages.reminderMessage === 'string' ? messages.reminderMessage.trim() : '';
+  const congratulationsMessage =
+    typeof messages.congratulationsMessage === 'string'
+      ? messages.congratulationsMessage.trim()
+      : '';
+  if (!welcomeMessage || !reminderMessage || !congratulationsMessage) {
+    return null;
+  }
+
+  const message = typeof record.message === 'string' ? record.message.trim() : undefined;
+  return {
+    welcomeMessage,
+    reminderMessage,
+    congratulationsMessage,
+    message,
+  };
+};
+
 const steps = [
   { id: 1, label: 'Course Landing Page' },
   { id: 2, label: 'Curriculum' },
-  { id: 3, label: "What You'll Learn" },
+  { id: 3, label: 'Automated Messages' },
   { id: 4, label: 'Settings' },
 ];
 
@@ -179,6 +218,7 @@ export const CourseCreator = () => {
   const [promoVideoFileName, setPromoVideoFileName] = useState('');
   const [targetStudentsInput, setTargetStudentsInput] = useState('');
   const [welcomeMessage, setWelcomeMessage] = useState('');
+  const [reminderMessage, setReminderMessage] = useState('');
   const [congratulationsMessage, setCongratulationsMessage] = useState('');
   const [courseStatus, setCourseStatus] = useState<'Draft' | 'Published'>('Draft');
   const [visibility, setVisibility] = useState<'Public' | 'Private'>('Public');
@@ -186,6 +226,7 @@ export const CourseCreator = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+  const [isGeneratingMessageAi, setIsGeneratingMessageAi] = useState(false);
   const [isUploadingCourseImage, setIsUploadingCourseImage] = useState(false);
   const [isUploadingPromoVideo, setIsUploadingPromoVideo] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -352,6 +393,11 @@ export const CourseCreator = () => {
         setCourseStatus(course.status === 'Published' ? 'Published' : 'Draft');
         setVisibility(course.visibility === 'Private' ? 'Private' : 'Public');
         setEnrollmentStatus(course.enrollmentStatus === 'Closed' ? 'Closed' : 'Open');
+        setWelcomeMessage(typeof course.welcomeMessage === 'string' ? course.welcomeMessage : '');
+        setReminderMessage(typeof course.reminderMessage === 'string' ? course.reminderMessage : '');
+        setCongratulationsMessage(
+          typeof course.congratulationsMessage === 'string' ? course.congratulationsMessage : '',
+        );
 
         const targetStudents = Array.isArray(course.targetStudents)
           ? course.targetStudents.filter((item): item is string => typeof item === 'string')
@@ -534,6 +580,56 @@ export const CourseCreator = () => {
     }
   };
 
+  const generateAiAutomatedMessages = async () => {
+    const title = courseTitle.trim();
+    if (!title) {
+      setAiError('Enter a course title first to generate automated messages.');
+      setAiMessage(null);
+      return;
+    }
+
+    setAiError(null);
+    setAiMessage(null);
+    setIsGeneratingMessageAi(true);
+
+    try {
+      const response = await fetch(`${COURSE_API_BASE_URL}/api/admin/courses/generate-automated-messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title,
+          language,
+          level,
+          category,
+          description: courseDescription.trim(),
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        setAiError(extractApiMessage(payload) ?? 'Unable to generate automated messages right now.');
+        return;
+      }
+
+      const generatedMessages = parseGeneratedAutomatedMessages(payload);
+      if (!generatedMessages) {
+        setAiError('Unexpected response from AI automated messages service.');
+        return;
+      }
+
+      setWelcomeMessage(generatedMessages.welcomeMessage);
+      setReminderMessage(generatedMessages.reminderMessage);
+      setCongratulationsMessage(generatedMessages.congratulationsMessage);
+      setAiMessage(generatedMessages.message || 'Generated automated course messages.');
+    } catch {
+      setAiError('Cannot reach the AI content service. Please try again.');
+    } finally {
+      setIsGeneratingMessageAi(false);
+    }
+  };
+
   const getNormalizedTargetStudents = () =>
     targetStudentsInput
       .split(/\r?\n|,/)
@@ -576,6 +672,9 @@ export const CourseCreator = () => {
           status: courseStatus,
           enrollmentStatus,
           visibility,
+          welcomeMessage: welcomeMessage.trim(),
+          reminderMessage: reminderMessage.trim(),
+          congratulationsMessage: congratulationsMessage.trim(),
           studentsCount: 0,
           rating: 0,
           lastUpdated: new Date().toISOString().slice(0, 10),
@@ -612,6 +711,9 @@ export const CourseCreator = () => {
       status: nextStatus,
       enrollmentStatus,
       visibility,
+      welcomeMessage: welcomeMessage.trim(),
+      reminderMessage: reminderMessage.trim(),
+      congratulationsMessage: congratulationsMessage.trim(),
       sections: normalizedSections,
     };
 
@@ -785,7 +887,7 @@ export const CourseCreator = () => {
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Course Builder</h3>
             <nav className="space-y-1">
-              {['Landing Page Info', "What You'll Learn", 'Course Image', 'Promotional Video'].map((item) => (
+              {['Landing Page Info', 'Automated Messages', 'Course Image', 'Promotional Video'].map((item) => (
                 <button key={item} className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50">
                   {item}
                 </button>
@@ -1115,29 +1217,93 @@ export const CourseCreator = () => {
                 exit={{ opacity: 0, x: -20 }}
                 className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm space-y-8"
               >
-                <div>
-                  <h2 className="text-2xl font-bold text-slate-900 mb-2">What You'll Learn</h2>
-                  <p className="text-slate-500">These learning outcomes are synced with the landing page field.</p>
-                </div>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <label className="text-sm font-bold text-slate-700">What will students learn in your course?</label>
-                    <button
-                      type="button"
-                      onClick={generateAiCourseCopy}
-                      disabled={isGeneratingAi}
-                      className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      <Sparkles className="h-3.5 w-3.5" />
-                      {isGeneratingAi ? 'Generating...' : 'Generate with AI'}
-                    </button>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 mb-2">Automated Messages</h2>
+                    <p className="text-slate-500">Configure the automated messages sent to students during their learning journey.</p>
                   </div>
-                  <textarea 
-                    value={targetStudentsInput}
-                    onChange={(event) => setTargetStudentsInput(event.target.value)}
-                    placeholder="Example: Build a full-stack application from scratch..."
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none min-h-[150px]"
-                  />
+                  <button
+                    type="button"
+                    onClick={generateAiAutomatedMessages}
+                    disabled={isGeneratingMessageAi}
+                    className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {isGeneratingMessageAi ? 'Generating...' : 'Generate with AI'}
+                  </button>
+                </div>
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700">Welcome Message</label>
+                    <p className="text-[11px] text-slate-500">Sent when a student first starts learning this course.</p>
+                    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                      <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-1">
+                        <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                          <Bold className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                          <Italic className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                          <List className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <textarea
+                        value={welcomeMessage}
+                        onChange={(event) => setWelcomeMessage(event.target.value)}
+                        placeholder="e.g. Welcome to the course! I'm excited to help you get started."
+                        className="w-full px-4 py-3 outline-none min-h-[130px] text-sm text-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700">Reminder Message</label>
+                    <p className="text-[11px] text-slate-500">Sent while students are in progress to encourage continuation.</p>
+                    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                      <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-1">
+                        <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                          <Bold className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                          <Italic className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                          <List className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <textarea
+                        value={reminderMessage}
+                        onChange={(event) => setReminderMessage(event.target.value)}
+                        placeholder="e.g. You're doing great. Keep going and complete your next lesson today."
+                        className="w-full px-4 py-3 outline-none min-h-[130px] text-sm text-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700">Congratulations Message</label>
+                    <p className="text-[11px] text-slate-500">Sent when a student completes every lesson in the course.</p>
+                    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                      <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-1">
+                        <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                          <Bold className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                          <Italic className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
+                          <List className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <textarea
+                        value={congratulationsMessage}
+                        onChange={(event) => setCongratulationsMessage(event.target.value)}
+                        placeholder="e.g. Congratulations on completing the course. You did an excellent job!"
+                        className="w-full px-4 py-3 outline-none min-h-[130px] text-sm text-slate-700"
+                      />
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -1152,7 +1318,7 @@ export const CourseCreator = () => {
               >
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900 mb-2">Settings</h2>
-                  <p className="text-slate-500">Manage visibility, enrollment, and automated messages.</p>
+                  <p className="text-slate-500">Manage visibility and enrollment settings.</p>
                 </div>
                 <div className="space-y-6">
                   <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl">
@@ -1212,60 +1378,6 @@ export const CourseCreator = () => {
                     </div>
                   </div>
 
-                  <div className="p-6 bg-slate-50 rounded-xl border border-slate-100 space-y-6">
-                    <div>
-                      <h4 className="font-bold text-slate-900">Automated Messages</h4>
-                      <p className="text-xs text-slate-500">Send automatic emails to your students to keep them engaged.</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-bold text-slate-700">Welcome Message</label>
-                      <p className="text-[11px] text-slate-500">Sent to students immediately after they enroll.</p>
-                      <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-                        <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-1">
-                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
-                            <Bold className="w-3.5 h-3.5" />
-                          </button>
-                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
-                            <Italic className="w-3.5 h-3.5" />
-                          </button>
-                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
-                            <List className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <textarea
-                          value={welcomeMessage}
-                          onChange={(event) => setWelcomeMessage(event.target.value)}
-                          placeholder="e.g. Welcome to the course! I'm so excited to have you here..."
-                          className="w-full px-4 py-3 outline-none min-h-[130px] text-sm text-slate-700"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-bold text-slate-700">Congratulations Message</label>
-                      <p className="text-[11px] text-slate-500">Sent to students when they complete all lessons in the course.</p>
-                      <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-                        <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-1">
-                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
-                            <Bold className="w-3.5 h-3.5" />
-                          </button>
-                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
-                            <Italic className="w-3.5 h-3.5" />
-                          </button>
-                          <button type="button" className="w-7 h-7 rounded-md hover:bg-slate-100 inline-flex items-center justify-center text-slate-500">
-                            <List className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <textarea
-                          value={congratulationsMessage}
-                          onChange={(event) => setCongratulationsMessage(event.target.value)}
-                          placeholder="e.g. Congratulations on finishing the course! You've done a great job..."
-                          className="w-full px-4 py-3 outline-none min-h-[130px] text-sm text-slate-700"
-                        />
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </motion.div>
             )}

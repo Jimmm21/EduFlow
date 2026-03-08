@@ -12,6 +12,7 @@ import { AdminCourseOverview } from './pages/admin/CourseOverview';
 import { LessonEditor } from './pages/admin/LessonEditor';
 import { AdminPerformance } from './pages/admin/Performance';
 import { AdminEnrollments } from './pages/admin/Enrollments';
+import { AdminStudentList } from './pages/admin/StudentList';
 import { AdminProfile } from './pages/admin/Resources';
 import { AdminManagement } from './pages/admin/AdminManagement';
 
@@ -109,6 +110,14 @@ export default function App() {
           element={(
             <RequireAuth allowedRoles={['Admin']}>
               <AdminLayout><AdminEnrollments /></AdminLayout>
+            </RequireAuth>
+          )}
+        />
+        <Route
+          path="/admin/students"
+          element={(
+            <RequireAuth allowedRoles={['Admin']}>
+              <AdminLayout><AdminStudentList /></AdminLayout>
             </RequireAuth>
           )}
         />

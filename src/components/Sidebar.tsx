@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, BookOpen, BarChart3, ClipboardList, Shield, UserCircle2, LogOut, Moon, GraduationCap } from 'lucide-react';
+import { LayoutDashboard, BookOpen, BarChart3, ClipboardList, Shield, UserCircle2, LogOut, Users } from 'lucide-react';
 import { cn } from '../utils';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
@@ -9,6 +9,7 @@ const navItems = [
   { icon: BookOpen, label: 'Courses', path: '/admin/courses' },
   { icon: BarChart3, label: 'Performance', path: '/admin/performance' },
   { icon: ClipboardList, label: 'Enrollment List', path: '/admin/enrollments' },
+  { icon: Users, label: 'Student List', path: '/admin/students' },
   { icon: Shield, label: 'Admin', path: '/admin/admins' },
   { icon: UserCircle2, label: 'Profile', path: '/admin/profile' },
 ];
@@ -64,14 +65,6 @@ export const Sidebar = () => {
       </nav>
 
       <div className="p-4 border-t border-slate-100 space-y-1">
-        <button className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 w-full">
-          <Moon className="w-4 h-4" />
-          Toggle Theme
-        </button>
-        <Link to="/" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 w-full">
-          <GraduationCap className="w-4 h-4" />
-          Student View
-        </Link>
         <button
           type="button"
           onClick={handleLogout}

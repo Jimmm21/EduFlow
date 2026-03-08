@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -8,8 +9,10 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ..database import get_connection
+from . import email_service
 
 QUIZ_CONTENT_PREFIX = "__QUIZ_JSON__"
+logger = logging.getLogger(__name__)
 
 
 def normalize_quiz_question_type(value: Any) -> str:
@@ -429,6 +432,98 @@ def update_student_course_progress_from_completed_lecture(
   }
 
 
+def get_student_course_status(
+  cursor: psycopg.Cursor[dict[str, Any]],
+  *,
+  course_id: str,
+  student_id: str,
+) -> str | None:
+  cursor.execute(
+    """
+    SELECT status
+    FROM student_course_progress
+    WHERE user_id = %s AND course_id = %s;
+    """,
+    (student_id, course_id),
+  )
+  row = cursor.fetchone()
+  if not row:
+    return None
+
+  status_value = row.get("status")
+  if isinstance(status_value, str) and status_value in {"in-progress", "completed", "wishlist"}:
+    return status_value
+  return None
+
+
+def fetch_completion_email_payload(
+  cursor: psycopg.Cursor[dict[str, Any]],
+  *,
+  course_id: str,
+  student_id: str,
+) -> dict[str, str] | None:
+  cursor.execute(
+    """
+    SELECT
+      u.email AS student_email,
+      c.title AS course_title,
+      c.congratulations_message AS course_congratulations_message
+    FROM app_users u
+    INNER JOIN courses c ON c.id = %s
+    WHERE u.id = %s AND u.role = 'Student';
+    """,
+    (course_id, student_id),
+  )
+  row = cursor.fetchone()
+  if not row:
+    return None
+
+  return {
+    "student_email": str(row.get("student_email") or "").strip(),
+    "course_title": str(row.get("course_title") or "").strip(),
+    "congratulations_message": str(row.get("course_congratulations_message") or "").strip(),
+  }
+
+
+def send_completion_email_if_needed(
+  *,
+  course_id: str,
+  student_id: str,
+  previous_status: str | None,
+  current_status: str,
+  completion_email_payload: dict[str, str] | None,
+) -> None:
+  if current_status != "completed" or previous_status == "completed" or not completion_email_payload:
+    return
+
+  try:
+    sent, email_error = email_service.send_course_completion_email(
+      student_email=completion_email_payload["student_email"],
+      course_title=completion_email_payload["course_title"],
+      congratulations_message=completion_email_payload["congratulations_message"],
+    )
+    if not sent:
+      logger.warning(
+        "Completion email was not sent for student %s in course %s: %s",
+        student_id,
+        course_id,
+        email_error or "Unknown Gmail API error.",
+      )
+    else:
+      logger.info(
+        "Completion email sent for student %s in course %s to %s.",
+        student_id,
+        course_id,
+        completion_email_payload["student_email"],
+      )
+  except Exception:
+    logger.exception(
+      "Unexpected error while sending completion email for student %s in course %s",
+      student_id,
+      course_id,
+    )
+
+
 def get_lecture_quiz(course_id: str, lecture_id: str, student_id: str) -> dict[str, Any]:
   normalized_course_id = course_id.strip()
   normalized_lecture_id = lecture_id.strip()
@@ -579,12 +674,20 @@ def submit_lecture_quiz_attempt(
     if normalized_question_id and normalized_answer_id:
       selection_map[normalized_question_id] = normalized_answer_id
 
+  previous_course_status: str | None = None
+  completion_email_payload: dict[str, str] | None = None
+
   try:
     with get_connection(dict_row) as connection:
       with connection.cursor() as cursor:
         ensure_student_exists(cursor, normalized_student_id)
         lecture_row = fetch_quiz_lecture(cursor, normalized_course_id, normalized_lecture_id)
         ensure_student_has_course_access(cursor, normalized_course_id, normalized_student_id)
+        previous_course_status = get_student_course_status(
+          cursor,
+          course_id=normalized_course_id,
+          student_id=normalized_student_id,
+        )
 
         questions_with_answers = parse_quiz_content(lecture_row.get("content"))
         if not questions_with_answers:
@@ -659,6 +762,12 @@ def submit_lecture_quiz_attempt(
           lecture_id=normalized_lecture_id,
           student_id=normalized_student_id,
         )
+        if progress_payload.get("courseStatus") == "completed":
+          completion_email_payload = fetch_completion_email_payload(
+            cursor,
+            course_id=normalized_course_id,
+            student_id=normalized_student_id,
+          )
       connection.commit()
   except psycopg.OperationalError as error:
     raise HTTPException(
@@ -678,6 +787,13 @@ def submit_lecture_quiz_attempt(
       detail="Unable to process quiz attempt.",
     )
   attempt_payload.update(progress_payload)
+  send_completion_email_if_needed(
+    course_id=normalized_course_id,
+    student_id=normalized_student_id,
+    previous_status=previous_course_status,
+    current_status=progress_payload.get("courseStatus", ""),
+    completion_email_payload=completion_email_payload,
+  )
 
   return attempt_payload
 
@@ -691,12 +807,20 @@ def complete_lecture(course_id: str, lecture_id: str, student_id: str) -> dict[s
   if not normalized_student_id:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Student ID is required.")
 
+  previous_course_status: str | None = None
+  completion_email_payload: dict[str, str] | None = None
+
   try:
     with get_connection(dict_row) as connection:
       with connection.cursor() as cursor:
         ensure_student_exists(cursor, normalized_student_id)
         lecture_row = fetch_course_lecture(cursor, normalized_course_id, normalized_lecture_id)
         ensure_student_has_course_access(cursor, normalized_course_id, normalized_student_id)
+        previous_course_status = get_student_course_status(
+          cursor,
+          course_id=normalized_course_id,
+          student_id=normalized_student_id,
+        )
 
         progress_payload = update_student_course_progress_from_completed_lecture(
           cursor,
@@ -704,6 +828,12 @@ def complete_lecture(course_id: str, lecture_id: str, student_id: str) -> dict[s
           lecture_id=normalized_lecture_id,
           student_id=normalized_student_id,
         )
+        if progress_payload.get("courseStatus") == "completed":
+          completion_email_payload = fetch_completion_email_payload(
+            cursor,
+            course_id=normalized_course_id,
+            student_id=normalized_student_id,
+          )
       connection.commit()
   except psycopg.OperationalError as error:
     raise HTTPException(
@@ -715,6 +845,14 @@ def complete_lecture(course_id: str, lecture_id: str, student_id: str) -> dict[s
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail="Unable to update lecture progress.",
     ) from error
+
+  send_completion_email_if_needed(
+    course_id=normalized_course_id,
+    student_id=normalized_student_id,
+    previous_status=previous_course_status,
+    current_status=progress_payload.get("courseStatus", ""),
+    completion_email_payload=completion_email_payload,
+  )
 
   return {
     "courseId": normalized_course_id,

@@ -34,6 +34,9 @@ export interface Course {
   status: 'Draft' | 'Published';
   enrollmentStatus: 'Open' | 'Closed';
   visibility: 'Public' | 'Private';
+  welcomeMessage?: string;
+  reminderMessage?: string;
+  congratulationsMessage?: string;
   studentsCount: number;
   rating: number;
   lastUpdated: string;
@@ -82,6 +85,18 @@ export interface CourseEnrollment {
   studentEmail: string;
   enrolledAt: string;
   progress: number;
+}
+
+export interface AdminStudentEnrollment {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  enrolledAt: string;
+  progress: number;
+  learningStatus: LearningStatus;
 }
 
 export interface CourseReview {

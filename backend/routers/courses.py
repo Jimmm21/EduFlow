@@ -10,12 +10,15 @@ from ..schemas import (
   LectureProgressResponse,
   CourseResponse,
   CreateCourseInput,
+  GenerateAutomatedMessagesInput,
+  GenerateAutomatedMessagesResponse,
   GenerateCourseCopyInput,
   GenerateCourseCopyResponse,
   GenerateQuizFromVideoInput,
   GenerateQuizFromVideoResponse,
   QuizAttemptResponse,
   QuizLectureResponse,
+  StudentEnrollmentResponse,
   SubmitQuizAttemptInput,
 )
 from ..services import ai_content_service, course_service, quiz_service, upload_service
@@ -69,6 +72,15 @@ def create_course(payload: CreateCourseInput) -> CourseResponse:
 )
 def generate_course_content(payload: GenerateCourseCopyInput) -> GenerateCourseCopyResponse:
   return ai_content_service.generate_course_copy(payload)
+
+
+@router.post(
+  "/api/admin/courses/generate-automated-messages",
+  response_model=GenerateAutomatedMessagesResponse,
+  status_code=status.HTTP_200_OK,
+)
+def generate_automated_messages(payload: GenerateAutomatedMessagesInput) -> GenerateAutomatedMessagesResponse:
+  return ai_content_service.generate_automated_messages(payload)
 
 
 @router.post(
@@ -140,6 +152,21 @@ def list_student_learning_courses(student_id: str) -> CourseResponse:
 def list_enrollment_requests(course_id: str | None = None) -> EnrollmentRequestResponse:
   requests = course_service.list_enrollment_requests(course_id=course_id)
   return EnrollmentRequestResponse(success=True, requests=requests)
+
+
+@router.get("/api/admin/student-enrollments", response_model=StudentEnrollmentResponse)
+def list_student_enrollments(course_id: str | None = None) -> StudentEnrollmentResponse:
+  enrollments = course_service.list_student_enrollments(course_id=course_id)
+  return StudentEnrollmentResponse(success=True, enrollments=enrollments)
+
+
+@router.delete("/api/admin/student-enrollments/{enrollment_id}", response_model=StudentEnrollmentResponse)
+def remove_student_enrollment(enrollment_id: str) -> StudentEnrollmentResponse:
+  removed = course_service.remove_student_enrollment(enrollment_id)
+  return StudentEnrollmentResponse(
+    success=True,
+    message=f"Removed {removed['studentName']} from {removed['courseTitle']}.",
+  )
 
 
 @router.patch("/api/admin/enrollment-requests/{request_id}", response_model=EnrollmentRequestResponse)

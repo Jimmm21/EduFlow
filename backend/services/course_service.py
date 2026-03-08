@@ -1,3 +1,4 @@
+import logging
 import re
 import secrets
 from typing import Any
@@ -8,8 +9,10 @@ from psycopg.rows import dict_row
 
 from ..database import get_connection
 from ..schemas import CourseResponse, CreateCourseInput, SectionInput
+from . import email_service
 
 PUBLIC_COURSE_FILTER = "status = 'Published' AND visibility = 'Public'"
+logger = logging.getLogger(__name__)
 
 
 def slugify(value: str) -> str:
@@ -112,6 +115,9 @@ def map_course_row(row: dict[str, Any]) -> dict[str, Any]:
     "status": row["status"],
     "enrollmentStatus": row["enrollment_status"],
     "visibility": row["visibility"],
+    "welcomeMessage": row.get("welcome_message") or "",
+    "reminderMessage": row.get("reminder_message") or "",
+    "congratulationsMessage": row.get("congratulations_message") or "",
     "studentsCount": row["students_count"],
     "rating": float(row["rating"]),
     "lastUpdated": row["last_updated"].isoformat() if row.get("last_updated") else "",
@@ -129,6 +135,20 @@ def map_enrollment_request_row(row: dict[str, Any]) -> dict[str, Any]:
     "requestedAt": row["requested_at"].date().isoformat() if row.get("requested_at") else "",
     "status": row["status"],
     "note": row.get("note"),
+  }
+
+
+def map_student_enrollment_row(row: dict[str, Any]) -> dict[str, Any]:
+  return {
+    "id": row["id"],
+    "courseId": row["course_id"],
+    "courseTitle": row.get("course_title") or "",
+    "studentId": row["student_id"],
+    "studentName": row["student_name"],
+    "studentEmail": row["student_email"],
+    "enrolledAt": row["enrolled_at"].date().isoformat() if row.get("enrolled_at") else "",
+    "progress": int(row.get("progress") or 0),
+    "learningStatus": row.get("learning_status") or "in-progress",
   }
 
 
@@ -237,6 +257,9 @@ def fetch_course_by_id_with_options(
       status,
       enrollment_status,
       visibility,
+      welcome_message,
+      reminder_message,
+      congratulations_message,
       students_count,
       rating,
       last_updated
@@ -333,9 +356,12 @@ def create_course(payload: CreateCourseInput) -> CourseResponse:
             status,
             enrollment_status,
             visibility,
+            welcome_message,
+            reminder_message,
+            congratulations_message,
             last_updated
           )
-          VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
+          VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
           """,
           (
             course_id,
@@ -351,6 +377,9 @@ def create_course(payload: CreateCourseInput) -> CourseResponse:
             payload.status,
             payload.enrollmentStatus,
             payload.visibility,
+            payload.welcomeMessage.strip(),
+            payload.reminderMessage.strip(),
+            payload.congratulationsMessage.strip(),
           ),
         )
 
@@ -655,6 +684,133 @@ def list_enrollment_requests(course_id: str | None = None) -> list[dict[str, Any
   return [map_enrollment_request_row(row) for row in request_rows]
 
 
+def list_student_enrollments(course_id: str | None = None) -> list[dict[str, Any]]:
+  try:
+    with get_connection(dict_row) as connection:
+      with connection.cursor() as cursor:
+        base_query = """
+          SELECT
+            ce.id::text AS id,
+            ce.course_id,
+            c.title AS course_title,
+            ce.student_id::text AS student_id,
+            u.name AS student_name,
+            u.email AS student_email,
+            ce.enrolled_at,
+            COALESCE(scp.progress, ce.progress, 0) AS progress,
+            COALESCE(
+              scp.status,
+              CASE WHEN COALESCE(scp.progress, ce.progress, 0) >= 100 THEN 'completed' ELSE 'in-progress' END
+            ) AS learning_status
+          FROM course_enrollments ce
+          INNER JOIN courses c ON c.id = ce.course_id
+          INNER JOIN app_users u ON u.id = ce.student_id
+          LEFT JOIN student_course_progress scp
+            ON scp.user_id = ce.student_id
+            AND scp.course_id = ce.course_id
+        """
+        params: list[Any] = []
+        if course_id:
+          base_query += " WHERE ce.course_id = %s"
+          params.append(course_id)
+        base_query += " ORDER BY ce.enrolled_at DESC, u.name ASC;"
+
+        cursor.execute(base_query, params)
+        enrollment_rows = cursor.fetchall()
+  except psycopg.OperationalError as error:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Database is unavailable.",
+    ) from error
+  except psycopg.Error as error:
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail="Unable to fetch enrolled students.",
+    ) from error
+
+  return [map_student_enrollment_row(row) for row in enrollment_rows]
+
+
+def remove_student_enrollment(enrollment_id: str) -> dict[str, str]:
+  normalized_enrollment_id = enrollment_id.strip()
+  if not normalized_enrollment_id:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Enrollment ID is required.")
+
+  try:
+    with get_connection(dict_row) as connection:
+      with connection.cursor() as cursor:
+        cursor.execute(
+          """
+          SELECT
+            ce.id::text AS id,
+            ce.course_id,
+            ce.student_id::text AS student_id,
+            c.title AS course_title,
+            u.name AS student_name
+          FROM course_enrollments ce
+          INNER JOIN courses c ON c.id = ce.course_id
+          INNER JOIN app_users u ON u.id = ce.student_id
+          WHERE ce.id::text = %s;
+          """,
+          (normalized_enrollment_id,),
+        )
+        enrollment_row = cursor.fetchone()
+        if not enrollment_row:
+          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student enrollment not found.")
+
+        course_id = enrollment_row["course_id"]
+        student_id = enrollment_row["student_id"]
+
+        cursor.execute(
+          """
+          DELETE FROM student_lecture_progress
+          WHERE course_id = %s AND user_id = %s;
+          """,
+          (course_id, student_id),
+        )
+        cursor.execute(
+          """
+          DELETE FROM student_course_progress
+          WHERE course_id = %s AND user_id = %s;
+          """,
+          (course_id, student_id),
+        )
+        cursor.execute(
+          """
+          DELETE FROM course_enrollments
+          WHERE id::text = %s;
+          """,
+          (normalized_enrollment_id,),
+        )
+        cursor.execute(
+          """
+          UPDATE enrollment_requests
+          SET
+            status = 'Rejected',
+            note = 'Removed by admin.'
+          WHERE course_id = %s AND student_id = %s;
+          """,
+          (course_id, student_id),
+        )
+        refresh_course_student_count(cursor, course_id)
+      connection.commit()
+  except psycopg.OperationalError as error:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Database is unavailable.",
+    ) from error
+  except psycopg.Error as error:
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail="Unable to remove student enrollment.",
+    ) from error
+
+  return {
+    "studentName": str(enrollment_row.get("student_name") or "Student"),
+    "courseTitle": str(enrollment_row.get("course_title") or "the course"),
+  }
+
+
 def ensure_student_exists(cursor: psycopg.Cursor[dict[str, Any]], student_id: str) -> None:
   cursor.execute(
     """
@@ -926,6 +1082,10 @@ def update_enrollment_request_status(request_id: str, next_status: str) -> dict[
   if next_status not in {"Pending", "Accepted", "Rejected"}:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid enrollment request status.")
 
+  should_send_welcome_email = False
+  hydrated_request: dict[str, Any] | None = None
+  welcome_email_payload: dict[str, str] | None = None
+
   try:
     with get_connection(dict_row) as connection:
       with connection.cursor() as cursor:
@@ -941,6 +1101,18 @@ def update_enrollment_request_status(request_id: str, next_status: str) -> dict[
         if not existing_request:
           raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enrollment request not found.")
 
+        if next_status in {"Accepted", "Rejected"} and existing_request["status"] != "Pending":
+          raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending enrollment requests can be accepted or rejected.",
+          )
+
+        if next_status == existing_request["status"]:
+          raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Enrollment request is already {next_status}.",
+          )
+
         cursor.execute(
           """
           UPDATE enrollment_requests
@@ -954,6 +1126,8 @@ def update_enrollment_request_status(request_id: str, next_status: str) -> dict[
 
         course_id = updated_request["course_id"]
         student_id = updated_request["student_id"]
+        # Trigger welcome email whenever admin applies Accepted.
+        should_send_welcome_email = next_status == "Accepted"
 
         if next_status == "Accepted":
           cursor.execute(
@@ -999,6 +1173,7 @@ def update_enrollment_request_status(request_id: str, next_status: str) -> dict[
             er.student_id::text AS student_id,
             u.name AS student_name,
             u.email AS student_email,
+            c.welcome_message AS course_welcome_message,
             er.requested_at,
             er.status,
             er.note
@@ -1010,6 +1185,15 @@ def update_enrollment_request_status(request_id: str, next_status: str) -> dict[
           (normalized_request_id,),
         )
         hydrated_request = cursor.fetchone()
+        if not hydrated_request:
+          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enrollment request not found.")
+
+        if should_send_welcome_email:
+          welcome_email_payload = {
+            "student_email": str(hydrated_request.get("student_email") or "").strip(),
+            "course_title": str(hydrated_request.get("course_title") or "").strip(),
+            "welcome_message": str(hydrated_request.get("course_welcome_message") or "").strip(),
+          }
       connection.commit()
   except psycopg.OperationalError as error:
     raise HTTPException(
@@ -1021,6 +1205,31 @@ def update_enrollment_request_status(request_id: str, next_status: str) -> dict[
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail="Unable to update enrollment request.",
     ) from error
+
+  if should_send_welcome_email and welcome_email_payload:
+    try:
+      sent, email_error = email_service.send_course_welcome_email(
+        student_email=welcome_email_payload["student_email"],
+        course_title=welcome_email_payload["course_title"],
+        welcome_message=welcome_email_payload["welcome_message"],
+      )
+      if not sent:
+        logger.warning(
+          "Welcome email was not sent for enrollment request %s: %s",
+          normalized_request_id,
+          email_error or "Unknown Gmail API error.",
+        )
+      else:
+        logger.info(
+          "Welcome email sent for enrollment request %s to %s.",
+          normalized_request_id,
+          welcome_email_payload["student_email"],
+        )
+    except Exception:
+      logger.exception("Unexpected error while sending welcome email for enrollment request %s", normalized_request_id)
+
+  if not hydrated_request:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enrollment request not found.")
 
   return map_enrollment_request_row(hydrated_request)
 
@@ -1071,6 +1280,9 @@ def update_course(course_id: str, payload: CreateCourseInput) -> CourseResponse:
             status = %s,
             enrollment_status = %s,
             visibility = %s,
+            welcome_message = %s,
+            reminder_message = %s,
+            congratulations_message = %s,
             last_updated = CURRENT_DATE,
             updated_at = NOW()
           WHERE id = %s;
@@ -1088,6 +1300,9 @@ def update_course(course_id: str, payload: CreateCourseInput) -> CourseResponse:
             payload.status,
             payload.enrollmentStatus,
             payload.visibility,
+            payload.welcomeMessage.strip(),
+            payload.reminderMessage.strip(),
+            payload.congratulationsMessage.strip(),
             course_id,
           ),
         )
