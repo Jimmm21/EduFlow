@@ -149,6 +149,7 @@ def map_student_enrollment_row(row: dict[str, Any]) -> dict[str, Any]:
     "enrolledAt": row["enrolled_at"].date().isoformat() if row.get("enrolled_at") else "",
     "progress": int(row.get("progress") or 0),
     "learningStatus": row.get("learning_status") or "in-progress",
+    "studentRating": int(row["student_rating"]) if row.get("student_rating") is not None else None,
   }
 
 
@@ -701,13 +702,17 @@ def list_student_enrollments(course_id: str | None = None) -> list[dict[str, Any
             COALESCE(
               scp.status,
               CASE WHEN COALESCE(scp.progress, ce.progress, 0) >= 100 THEN 'completed' ELSE 'in-progress' END
-            ) AS learning_status
+            ) AS learning_status,
+            cr.rating AS student_rating
           FROM course_enrollments ce
           INNER JOIN courses c ON c.id = ce.course_id
           INNER JOIN app_users u ON u.id = ce.student_id
           LEFT JOIN student_course_progress scp
             ON scp.user_id = ce.student_id
             AND scp.course_id = ce.course_id
+          LEFT JOIN course_reviews cr
+            ON cr.course_id = ce.course_id
+            AND cr.student_id = ce.student_id
         """
         params: list[Any] = []
         if course_id:

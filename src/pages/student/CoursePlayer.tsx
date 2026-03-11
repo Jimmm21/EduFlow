@@ -146,6 +146,9 @@ export const CoursePlayer = () => {
   const [isSubmittingRating, setIsSubmittingRating] = useState(false);
   const [ratingError, setRatingError] = useState<string | null>(null);
   const [ratingMessage, setRatingMessage] = useState<string | null>(null);
+  const [expandedSections, setExpandedSections] = useState<string[]>(
+    course.sections[0] ? [course.sections[0].id] : [],
+  );
 
   useEffect(() => {
     if (!id) {
@@ -288,6 +291,15 @@ export const CoursePlayer = () => {
   useEffect(() => {
     setSelectedRating(course.studentRating ?? 0);
   }, [course.id, course.studentRating]);
+
+  useEffect(() => {
+    if (course.sections.length === 0) {
+      setExpandedSections([]);
+      return;
+    }
+
+    setExpandedSections([course.sections[0].id]);
+  }, [course.id, course.sections]);
 
   const activeVideoUrl = activeLecture?.videoUrl?.trim() ?? '';
   const isActiveLectureQuiz = activeLecture?.type === 'Quiz';
@@ -471,6 +483,14 @@ export const CoursePlayer = () => {
     } finally {
       setIsSubmittingRating(false);
     }
+  };
+
+  const toggleSection = (sectionId: string) => {
+    setExpandedSections((current) =>
+      current.includes(sectionId)
+        ? current.filter((currentSectionId) => currentSectionId !== sectionId)
+        : [...current, sectionId],
+    );
   };
 
   if (isLoading) {
@@ -1057,7 +1077,11 @@ export const CoursePlayer = () => {
               <div className="flex-1 overflow-y-auto">
                 {course.sections.map((section, sectionIndex) => (
                   <div key={section.id} className="border-b border-white/5">
-                    <div className="flex items-center justify-between bg-white/5 p-4 transition-colors hover:bg-white/10">
+                    <button
+                      type="button"
+                      onClick={() => toggleSection(section.id)}
+                      className="flex w-full items-center justify-between bg-white/5 p-4 text-left transition-colors hover:bg-white/10"
+                    >
                       <div>
                         <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
                           Section {sectionIndex + 1}: {section.title}
@@ -1066,48 +1090,55 @@ export const CoursePlayer = () => {
                           {section.lectures.length} Lecture{section.lectures.length === 1 ? '' : 's'}
                         </p>
                       </div>
-                      <ChevronDown className="h-4 w-4 text-slate-500" />
-                    </div>
-                    <div className="divide-y divide-white/5">
-                      {section.lectures.map((lecture, lectureIndex) => {
-                        const isActive = activeLecture?.id === lecture.id;
-                        const isCompleted = completedLectureIdSet.has(lecture.id);
+                      <ChevronDown
+                        className={cn(
+                          'h-4 w-4 text-slate-500 transition-transform',
+                          expandedSections.includes(section.id) ? 'rotate-180' : '',
+                        )}
+                      />
+                    </button>
+                    {expandedSections.includes(section.id) ? (
+                      <div className="divide-y divide-white/5">
+                        {section.lectures.map((lecture, lectureIndex) => {
+                          const isActive = activeLecture?.id === lecture.id;
+                          const isCompleted = completedLectureIdSet.has(lecture.id);
 
-                        return (
-                          <button
-                            key={lecture.id}
-                            onClick={() => setActiveLecture(lecture)}
-                            className={cn(
-                              'flex w-full items-start gap-3 p-4 text-left transition-colors',
-                              isActive ? 'border-l-4 border-indigo-500 bg-indigo-600/20' : 'hover:bg-white/5',
-                            )}
-                          >
-                            <div className="mt-0.5">
-                              {isCompleted ? (
-                                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                              ) : (
-                                <Circle className="h-4 w-4 text-slate-600" />
+                          return (
+                            <button
+                              key={lecture.id}
+                              onClick={() => setActiveLecture(lecture)}
+                              className={cn(
+                                'flex w-full items-start gap-3 p-4 text-left transition-colors',
+                                isActive ? 'border-l-4 border-indigo-500 bg-indigo-600/20' : 'hover:bg-white/5',
                               )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <h5 className={cn('truncate text-sm font-medium', isActive ? 'text-indigo-400' : 'text-slate-300')}>
-                                {lectureIndex + 1}. {lecture.title}
-                              </h5>
-                              <div className="mt-1 flex items-center gap-2">
-                                {lecture.type === 'Video' ? (
-                                  <Video className="h-3 w-3 text-slate-500" />
-                                ) : lecture.type === 'Quiz' ? (
-                                  <HelpCircle className="h-3 w-3 text-slate-500" />
+                            >
+                              <div className="mt-0.5">
+                                {isCompleted ? (
+                                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                                 ) : (
-                                  <FileText className="h-3 w-3 text-slate-500" />
+                                  <Circle className="h-4 w-4 text-slate-600" />
                                 )}
-                                <span className="text-[10px] text-slate-500">{lecture.duration || 'Read content'}</span>
                               </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
+                              <div className="min-w-0 flex-1">
+                                <h5 className={cn('truncate text-sm font-medium', isActive ? 'text-indigo-400' : 'text-slate-300')}>
+                                  {lectureIndex + 1}. {lecture.title}
+                                </h5>
+                                <div className="mt-1 flex items-center gap-2">
+                                  {lecture.type === 'Video' ? (
+                                    <Video className="h-3 w-3 text-slate-500" />
+                                  ) : lecture.type === 'Quiz' ? (
+                                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                                  ) : (
+                                    <FileText className="h-3 w-3 text-slate-500" />
+                                  )}
+                                  <span className="text-[10px] text-slate-500">{lecture.duration || 'Read content'}</span>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>

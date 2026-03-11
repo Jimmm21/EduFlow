@@ -17,11 +17,9 @@ import type {
   QuizQuestionType,
   Section,
 } from '../types';
+import { API_BASE_URL } from './apiBase';
 
-export const COURSE_API_BASE_URL = (
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  'http://localhost:8001'
-).replace(/\/$/, '');
+export const COURSE_API_BASE_URL = API_BASE_URL;
 
 const isLearningStatus = (value: unknown): value is LearningStatus =>
   value === 'in-progress' || value === 'completed' || value === 'wishlist';
@@ -280,6 +278,7 @@ const normalizeAdminStudentEnrollment = (value: unknown): AdminStudentEnrollment
     enrolledAt: record.enrolledAt,
     progress: record.progress,
     learningStatus: record.learningStatus,
+    studentRating: typeof record.studentRating === 'number' ? record.studentRating : undefined,
   };
 };
 

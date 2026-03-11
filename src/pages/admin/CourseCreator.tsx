@@ -5,11 +5,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { CATEGORIES, LEVELS, LANGUAGES, cn } from '../../utils';
 import { Section, Lecture, ContentType } from '../../types';
 import { getCourseSectionsDraft, hasStoredCourseSectionsDraft, saveCourseSectionsDraft } from '../../admin/courseDraftStore';
+import { API_BASE_URL as COURSE_API_BASE_URL } from '../../lib/apiBase';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 
-const COURSE_API_BASE_URL = (
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  'http://localhost:8001'
-).replace(/\/$/, '');
+const createDraftId = () => `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_VIDEO_SIZE_BYTES = 30 * 1024 * 1024;
 
@@ -200,7 +199,11 @@ export const CourseCreator = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const courseKey = id ?? 'new';
+  const draftIdParam = (searchParams.get('draft') ?? '').trim();
+  const [pendingDraftId] = useState(() => (!id && !draftIdParam ? createDraftId() : ''));
+  const draftId = draftIdParam || pendingDraftId;
+  const courseKey = id ?? (draftId ? `new:${draftId}` : 'new');
+  const routeCourseId = id ?? 'new';
   const getStepFromQuery = () => {
     const step = Number(searchParams.get('step'));
     return Number.isInteger(step) && step >= 1 && step <= 4 ? step : 1;
@@ -225,6 +228,7 @@ export const CourseCreator = () => {
   const [enrollmentStatus, setEnrollmentStatus] = useState<'Open' | 'Closed'>('Open');
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [isGeneratingMessageAi, setIsGeneratingMessageAi] = useState(false);
   const [isUploadingCourseImage, setIsUploadingCourseImage] = useState(false);
@@ -233,7 +237,12 @@ export const CourseCreator = () => {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiMessage, setAiMessage] = useState<string | null>(null);
-  const [sections, setSections] = useState<Section[]>(() => getCourseSectionsDraft(courseKey));
+  const [sections, setSections] = useState<Section[]>(() => {
+    if (!id && !draftId) {
+      return [];
+    }
+    return getCourseSectionsDraft(courseKey);
+  });
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
 
   const setAndPersistSections = (nextSections: Section[]) => {
@@ -287,7 +296,8 @@ export const CourseCreator = () => {
           : section,
     );
     setAndPersistSections(nextSections);
-    navigate(`/admin/courses/${courseKey}/sections/${sectionId}/lectures/${newLecture.id}/edit`);
+    const draftQuery = !id && draftId ? `?draft=${encodeURIComponent(draftId)}` : '';
+    navigate(`/admin/courses/${routeCourseId}/sections/${sectionId}/lectures/${newLecture.id}/edit${draftQuery}`);
   };
 
   const removeLecture = (sectionId: string, lectureId: string) => {
@@ -335,7 +345,8 @@ export const CourseCreator = () => {
   };
 
   const openLessonEditor = (sectionId: string, lectureId: string) => {
-    navigate(`/admin/courses/${courseKey}/sections/${sectionId}/lectures/${lectureId}/edit`);
+    const draftQuery = !id && draftId ? `?draft=${encodeURIComponent(draftId)}` : '';
+    navigate(`/admin/courses/${routeCourseId}/sections/${sectionId}/lectures/${lectureId}/edit${draftQuery}`);
   };
 
   const getLectureIcon = (type: ContentType, className: string) => {
@@ -355,8 +366,25 @@ export const CourseCreator = () => {
   }, [searchParams]);
 
   useEffect(() => {
+    if (!id && !draftId) {
+      setSections([]);
+      return;
+    }
     setSections(getCourseSectionsDraft(courseKey));
-  }, [courseKey]);
+  }, [courseKey, draftId, id]);
+
+  useEffect(() => {
+    if (id || draftIdParam || !draftId) {
+      return;
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.set('draft', draftId);
+    if (!next.get('step')) {
+      next.set('step', '1');
+    }
+    setSearchParams(next, { replace: true });
+  }, [draftId, draftIdParam, id, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!id) {
@@ -649,6 +677,44 @@ export const CourseCreator = () => {
       })),
     }));
 
+  const getPublishValidationMessage = () => {
+    const normalizedSections = getNormalizedSections();
+    const hasAnyLectures = normalizedSections.some((section) => section.lectures.length > 0);
+    const hasSectionWithLessonAndQuiz = normalizedSections.some((section) => {
+      if (section.lectures.length === 0) {
+        return false;
+      }
+      const hasQuiz = section.lectures.some((lecture) => lecture.type === 'Quiz');
+      const hasLesson = section.lectures.some((lecture) => lecture.type !== 'Quiz');
+      return hasQuiz && hasLesson;
+    });
+
+    if (!hasAnyLectures) {
+      return 'Add at least one section with lectures before publishing.';
+    }
+
+    if (!hasSectionWithLessonAndQuiz) {
+      return 'Add a section that includes at least one lesson and one quiz before publishing.';
+    }
+
+    const missingMessages: string[] = [];
+    if (!welcomeMessage.trim()) {
+      missingMessages.push('welcome');
+    }
+    if (!reminderMessage.trim()) {
+      missingMessages.push('reminder');
+    }
+    if (!congratulationsMessage.trim()) {
+      missingMessages.push('congratulations');
+    }
+
+    if (missingMessages.length > 0) {
+      return `Complete automated messages (${missingMessages.join(', ')}) before publishing.`;
+    }
+
+    return null;
+  };
+
   const handlePreview = () => {
     const editorBasePath = id ? `/admin/courses/${id}` : '/admin/courses/new';
     const previewBackTo = searchParams.toString()
@@ -789,6 +855,57 @@ export const CourseCreator = () => {
     }
   };
 
+  const handleSaveDraft = async () => {
+    setSaveError(null);
+    setSaveMessage(null);
+    setIsSaving(true);
+
+    try {
+      const result = await saveCourse('Draft');
+      if (!result.success || !result.courseId) {
+        setSaveError(result.message ?? 'Unable to save draft.');
+        return;
+      }
+
+      saveCourseSectionsDraft(result.courseId, sections);
+      setCourseStatus('Draft');
+      navigate('/admin/courses', { state: { notice: 'Draft saved.' } });
+      return;
+    } catch {
+      setSaveError('Cannot reach the course service. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const openPublishConfirm = () => {
+    if (courseStatus === 'Published') {
+      handlePublish();
+      return;
+    }
+
+    setSaveError(null);
+    const validationMessage = getPublishValidationMessage();
+    if (validationMessage) {
+      setSaveError(validationMessage);
+      return;
+    }
+
+    setIsPublishConfirmOpen(true);
+  };
+
+  const closePublishConfirm = () => {
+    if (isPublishing) {
+      return;
+    }
+    setIsPublishConfirmOpen(false);
+  };
+
+  const confirmPublish = () => {
+    setIsPublishConfirmOpen(false);
+    handlePublish();
+  };
+
   const handlePublish = async () => {
     setSaveError(null);
     setSaveMessage(null);
@@ -804,13 +921,11 @@ export const CourseCreator = () => {
       saveCourseSectionsDraft(result.courseId, sections);
       setCourseStatus('Published');
 
+      const editorBasePath = `/admin/courses/${result.courseId}`;
       const query = activeStep === 1 ? '' : `?step=${activeStep}`;
-      if (!id) {
-        navigate(`/admin/courses/${result.courseId}${query}`, { replace: true });
-        return;
-      }
-
-      setSaveMessage('Course published. Students can now view and enroll.');
+      const previewBackTo = `${editorBasePath}${query}`;
+      navigate(`/course/${result.courseId}`, { state: { previewBackTo } });
+      return;
     } catch {
       setSaveError('Cannot reach the course service. Please try again.');
     } finally {
@@ -818,6 +933,7 @@ export const CourseCreator = () => {
     }
   };
   const isUploadingAsset = isUploadingCourseImage || isUploadingPromoVideo;
+  const isPublishedCourse = courseStatus === 'Published';
 
   return (
     <div className="max-w-5xl mx-auto pb-20">
@@ -826,40 +942,63 @@ export const CourseCreator = () => {
           <Link to="/admin" className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
             <ChevronLeft className="w-5 h-5 text-slate-600" />
           </Link>
-          <div>
-            <h1 className="text-xl font-bold text-slate-900">{id ? 'Edit Course' : 'Create New Course'}</h1>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
-              {courseStatus === 'Published' ? 'Published' : 'Draft Saved'}
-            </p>
-          </div>
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">{id ? 'Edit Course' : 'Create New Course'}</h1>
+          <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+            {courseStatus === 'Published' ? 'Published' : 'Draft Saved'}
+          </p>
         </div>
-        <div className="flex items-center gap-3">
+      </div>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={handlePreview}
+          className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+        >
+          Preview
+        </button>
+        <button
+          type="button"
+          onClick={handleSaveAndContinue}
+          disabled={isSaving || isPublishing || isUploadingAsset}
+          className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed text-white px-6 py-2 rounded-xl font-semibold transition-all shadow-lg shadow-indigo-200 active:scale-95"
+        >
+          {isSaving ? 'Saving...' : 'Save and Continue'}
+        </button>
+        {!isPublishedCourse ? (
           <button
             type="button"
-            onClick={handlePreview}
-            className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
-          >
-            Preview
-          </button>
-          <button
-            type="button"
-            onClick={handlePublish}
+            onClick={handleSaveDraft}
             disabled={isSaving || isPublishing || isUploadingAsset}
-            className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-2 font-semibold text-emerald-700 transition-all hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
+            className="px-5 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            <CheckCircle2 className="h-4 w-4" />
-            {isPublishing ? 'Publishing...' : courseStatus === 'Published' ? 'Update Published' : 'Publish'}
+            Save Draft
           </button>
-          <button
-            type="button"
-            onClick={handleSaveAndContinue}
-            disabled={isSaving || isPublishing || isUploadingAsset}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed text-white px-6 py-2 rounded-xl font-semibold transition-all shadow-lg shadow-indigo-200 active:scale-95"
-          >
-            {isSaving ? 'Saving...' : 'Save and Continue'}
-          </button>
-        </div>
+        ) : null}
+        <button
+          type="button"
+          onClick={openPublishConfirm}
+          disabled={isSaving || isPublishing || isUploadingAsset}
+          className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-2 font-semibold text-emerald-700 transition-all hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          <CheckCircle2 className="h-4 w-4" />
+          {isPublishing ? 'Publishing...' : courseStatus === 'Published' ? 'Update Course' : 'Publish'}
+        </button>
+      </div>
       </header>
+      <ConfirmDialog
+        isOpen={isPublishConfirmOpen}
+        badge="Confirm Publish"
+        title={`Publish ${courseTitle.trim() ? `"${courseTitle.trim()}"` : 'this course'}?`}
+        description="Students will be able to enroll and access the course immediately."
+        confirmLabel="Publish Course"
+        confirmingLabel="Publishing..."
+        cancelLabel="Cancel"
+        tone="primary"
+        isConfirming={isPublishing}
+        onCancel={closePublishConfirm}
+        onConfirm={confirmPublish}
+      />
       {saveError ? <p className="mb-6 text-sm font-medium text-red-600">{saveError}</p> : null}
       {saveMessage ? <p className="mb-6 text-sm font-medium text-emerald-600">{saveMessage}</p> : null}
       {aiError ? <p className="mb-6 text-sm font-medium text-red-600">{aiError}</p> : null}

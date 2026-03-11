@@ -20,9 +20,11 @@ const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 const storageKeyForCourse = (courseId: string) => `${STORAGE_PREFIX}.${courseId}`;
 
+const isNewCourseKey = (courseId: string) => courseId === 'new' || courseId.startsWith('new:');
+
 const fallbackSectionsForCourse = (courseId: string): Section[] => {
-  if (courseId === 'new') {
-    return createDefaultSections();
+  if (isNewCourseKey(courseId)) {
+    return [];
   }
 
   const course = MOCK_COURSES.find((item) => item.id === courseId);

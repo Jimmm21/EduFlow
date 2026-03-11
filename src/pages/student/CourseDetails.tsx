@@ -272,7 +272,6 @@ export const CourseDetails = () => {
           </div>
         </div>
       ) : null}
-
       <section className="bg-slate-900 py-12 text-white">
         <div className="mx-auto grid max-w-7xl grid-cols-1 gap-12 px-4 lg:grid-cols-3">
           <div className="space-y-6 lg:col-span-2">

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import type { User } from '../types';
+import { API_BASE_URL } from '../lib/apiBase';
 
 type UserRole = User['role'];
 
@@ -74,10 +75,7 @@ interface AuthContextValue {
 const ACTIVE_USER_STORAGE_KEY = 'eduflow.auth.active-user';
 const CUSTOM_CREDENTIALS_STORAGE_KEY = 'eduflow.auth.custom-credentials';
 const PROFILE_OVERRIDES_STORAGE_KEY = 'eduflow.auth.profile-overrides';
-const AUTH_API_BASE_URL = (
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  'http://localhost:8001'
-).replace(/\/$/, '');
+const AUTH_API_BASE_URL = API_BASE_URL;
 
 type UserProfileOverride = Pick<User, 'name' | 'email' | 'avatar'>;
 type UserProfileOverrides = Record<string, UserProfileOverride>;

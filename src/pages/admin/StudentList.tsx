@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Filter, GraduationCap, Trash2, Users } from 'lucide-react';
-import { MOCK_COURSE_ENROLLMENTS, MOCK_COURSES } from '../../mockData';
+import { Filter, Star, Trash2 } from 'lucide-react';
+import { MOCK_COURSE_ENROLLMENTS, MOCK_COURSE_REVIEWS, MOCK_COURSES } from '../../mockData';
 import type { AdminStudentEnrollment, Course, LearningStatus } from '../../types';
 import { cn } from '../../utils';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -16,8 +16,17 @@ const statusStyles: Record<LearningStatus, string> = {
   wishlist: 'bg-slate-100 text-slate-600',
 };
 
+const buildRatingKey = (courseId: string, studentName: string) =>
+  `${courseId}::${studentName.trim().toLowerCase()}`;
+
 const toFallbackEnrollments = (courses: Course[]): AdminStudentEnrollment[] => {
   const titleByCourseId = new Map(courses.map((course) => [course.id, course.title]));
+  const ratingLookup = new Map(
+    MOCK_COURSE_REVIEWS.map((review) => [
+      buildRatingKey(review.courseId, review.studentName),
+      review.rating,
+    ]),
+  );
 
   return MOCK_COURSE_ENROLLMENTS.map((enrollment) => ({
     id: enrollment.id,
@@ -29,6 +38,7 @@ const toFallbackEnrollments = (courses: Course[]): AdminStudentEnrollment[] => {
     enrolledAt: enrollment.enrolledAt,
     progress: enrollment.progress,
     learningStatus: enrollment.progress >= 100 ? 'completed' : 'in-progress',
+    studentRating: ratingLookup.get(buildRatingKey(enrollment.courseId, enrollment.studentName)),
   }));
 };
 
@@ -89,6 +99,29 @@ export const AdminStudentList = () => {
     }),
     [filteredEnrollments],
   );
+
+  const reviewRatings = useMemo(
+    () =>
+      new Map(
+        MOCK_COURSE_REVIEWS.map((review) => [
+          buildRatingKey(review.courseId, review.studentName),
+          review.rating,
+        ]),
+      ),
+    [],
+  );
+
+  const getRatingValue = (enrollment: AdminStudentEnrollment) => {
+    const rawRating =
+      typeof enrollment.studentRating === 'number'
+        ? enrollment.studentRating
+        : reviewRatings.get(buildRatingKey(enrollment.courseId, enrollment.studentName));
+    if (typeof rawRating !== 'number') {
+      return null;
+    }
+    const rounded = Math.round(rawRating);
+    return Math.max(0, Math.min(5, rounded));
+  };
 
   const openRemoveStudentConfirmation = (enrollment: AdminStudentEnrollment) => {
     setRemovalTarget(enrollment);
@@ -197,68 +230,92 @@ export const AdminStudentList = () => {
             <p className="text-sm text-slate-500">Accepted requests will appear here automatically.</p>
           </div>
         ) : (
-          <div className="divide-y divide-slate-100">
-            {filteredEnrollments.map((enrollment) => {
-              const isRemoving = actionEnrollmentId === enrollment.id;
+          <div className="overflow-x-auto">
+            <table className="min-w-[900px] w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider">Student Name</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider">Student Email</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider">Course</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider">Enrolled Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider">Progress</th>
+                  <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredEnrollments.map((enrollment) => {
+                  const isRemoving = actionEnrollmentId === enrollment.id;
+                  const ratingValue = getRatingValue(enrollment);
+                  const progressValue = Math.max(0, Math.min(100, enrollment.progress));
+                  const isCompleted = enrollment.learningStatus === 'completed';
 
-              return (
-                <article key={enrollment.id} className="px-6 py-5">
-                <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <h4 className="text-xl font-semibold text-slate-900">{enrollment.studentName}</h4>
-                      <span className={cn('rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide', statusStyles[enrollment.learningStatus])}>
-                        {enrollment.learningStatus === 'in-progress' ? 'In Progress' : enrollment.learningStatus}
-                      </span>
-                    </div>
-                    <div className="space-y-1 text-sm text-slate-500">
-                      <p>{enrollment.studentEmail}</p>
-                      <p>Course: {enrollment.courseTitle}</p>
-                      <p>Enrolled on {enrollment.enrolledAt}</p>
-                    </div>
-                  </div>
-
-                  <div className="min-w-[260px] space-y-3 rounded-xl bg-slate-50 p-4">
-                    <div className="flex items-center justify-between text-sm">
-                      <p className="font-semibold text-slate-700">Course Progress</p>
-                      <p className="font-bold text-slate-900">{enrollment.progress}%</p>
-                    </div>
-                    <div className="h-2 rounded-full bg-slate-200">
-                      <div
-                        className={cn(
-                          'h-2 rounded-full transition-[width]',
-                          enrollment.learningStatus === 'completed' ? 'bg-emerald-500' : 'bg-indigo-500',
-                        )}
-                        style={{ width: `${Math.max(0, Math.min(100, enrollment.progress))}%` }}
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
-                      {enrollment.learningStatus === 'completed' ? (
-                        <>
-                          <GraduationCap className="h-4 w-4 text-emerald-600" />
-                          Course completed
-                        </>
-                      ) : (
-                        <>
-                          <Users className="h-4 w-4 text-indigo-600" />
-                          Student is currently learning this course
-                        </>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => openRemoveStudentConfirmation(enrollment)}
-                      disabled={isRemoving}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      {isRemoving ? 'Removing...' : 'Remove Student'}
-                    </button>
-                  </div>
-                </div>
-              </article>
-              );
-            })}
+                  return (
+                    <tr key={enrollment.id} className="align-top">
+                      <td className="px-6 py-4">
+                        <p className="font-semibold text-slate-900">{enrollment.studentName}</p>
+                      </td>
+                      <td className="px-6 py-4 text-slate-600">{enrollment.studentEmail}</td>
+                      <td className="px-6 py-4 text-slate-600">{enrollment.courseTitle}</td>
+                      <td className="px-6 py-4 text-slate-600">{enrollment.enrolledAt}</td>
+                      <td className="px-6 py-4">
+                        <div className="min-w-[200px] space-y-2">
+                          <div className="flex items-center justify-between text-xs text-slate-500">
+                            <span className="font-semibold text-slate-700">{progressValue}%</span>
+                            <span>{isCompleted ? 'Completed' : 'In progress'}</span>
+                          </div>
+                          <div className="h-2 rounded-full bg-slate-200">
+                            <div
+                              className={cn(
+                                'h-2 rounded-full transition-[width]',
+                                isCompleted ? 'bg-emerald-500' : 'bg-indigo-500',
+                              )}
+                              style={{ width: `${progressValue}%` }}
+                            />
+                          </div>
+                          {isCompleted ? (
+                            <div className="flex items-center gap-2 text-xs">
+                              {ratingValue !== null ? (
+                                <>
+                                  <div className="flex items-center gap-0.5">
+                                    {Array.from({ length: 5 }, (_, index) => {
+                                      const filled = index < ratingValue;
+                                      return (
+                                        <Star
+                                          key={`${enrollment.id}-star-${index}`}
+                                          className={cn(
+                                            'h-3 w-3',
+                                            filled ? 'text-amber-500' : 'text-slate-300',
+                                          )}
+                                          fill={filled ? 'currentColor' : 'none'}
+                                        />
+                                      );
+                                    })}
+                                  </div>
+                                  <span className="font-semibold text-amber-600">{ratingValue}/5</span>
+                                </>
+                              ) : (
+                                <span className="text-slate-400">Not rated yet</span>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <button
+                          type="button"
+                          onClick={() => openRemoveStudentConfirmation(enrollment)}
+                          disabled={isRemoving}
+                          className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          {isRemoving ? 'Removing...' : 'Remove'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Users, Star, Plus, MoreVertical, ExternalLink, ClipboardList } from 'lucide-react';
-import { MOCK_COURSES, MOCK_ENROLLMENT_REQUESTS } from '../../mockData';
+import type { Course, EnrollmentRequest } from '../../types';
 import { cn } from '../../utils';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAuth } from '../../auth/AuthContext';
+import { fetchAdminCourses, fetchAdminEnrollmentRequests } from '../../lib/courseApi';
 
 const StatCard = ({ icon: Icon, label, value, trend, trendType }: any) => (
   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -28,8 +29,52 @@ const StatCard = ({ icon: Icon, label, value, trend, trendType }: any) => (
 
 export const AdminDashboard = () => {
   const { user } = useAuth();
-  const pendingEnrollments = MOCK_ENROLLMENT_REQUESTS.filter((request) => request.status === 'Pending').length;
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [pendingEnrollments, setPendingEnrollments] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const displayName = user?.name.trim() ? user.name.split(/\s+/)[0] : 'Admin';
+
+  useEffect(() => {
+    const loadDashboard = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const [adminCourses, enrollmentRequests] = await Promise.all([
+          fetchAdminCourses(),
+          fetchAdminEnrollmentRequests(),
+        ]);
+        setCourses(adminCourses);
+        setPendingEnrollments(
+          enrollmentRequests.filter((request: EnrollmentRequest) => request.status === 'Pending').length,
+        );
+      } catch (loadError) {
+        setCourses([]);
+        setPendingEnrollments(0);
+        setError(loadError instanceof Error ? loadError.message : 'Unable to load dashboard data.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadDashboard();
+  }, []);
+
+  const stats = useMemo(() => {
+    const totalEnrollments = courses.reduce((sum, course) => sum + (course.studentsCount ?? 0), 0);
+    const activeCourses = courses.filter((course) => course.status === 'Published').length;
+    const ratedCourses = courses.filter((course) => (course.rating ?? 0) > 0);
+    const averageRating = ratedCourses.length
+      ? ratedCourses.reduce((sum, course) => sum + (course.rating ?? 0), 0) / ratedCourses.length
+      : 0;
+
+    return {
+      totalEnrollments,
+      activeCourses,
+      averageRating,
+    };
+  }, [courses]);
 
   return (
     <div className="space-y-8">
@@ -47,23 +92,25 @@ export const AdminDashboard = () => {
         </Link>
       </header>
 
+      {error ? <p className="text-sm font-medium text-rose-600">{error}</p> : null}
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         <StatCard 
           icon={Users} 
           label="Total Enrollments" 
-          value="12,482" 
+          value={stats.totalEnrollments.toLocaleString()} 
           trend="+12% increase" 
           trendType="up" 
         />
         <StatCard 
           icon={BookOpen} 
           label="Active Courses" 
-          value="3" 
+          value={stats.activeCourses.toString()} 
         />
         <StatCard 
           icon={Star} 
           label="Average Rating" 
-          value="4.8" 
+          value={stats.averageRating.toFixed(1)} 
         />
         <StatCard
           icon={ClipboardList}
@@ -79,39 +126,50 @@ export const AdminDashboard = () => {
             View all
           </Link>
         </div>
-        <div className="divide-y divide-slate-100">
-          {MOCK_COURSES.map((course) => (
-            <motion.div 
-              key={course.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="p-6 flex items-center gap-6 hover:bg-slate-50 transition-colors group"
-            >
-              <Link to={`/admin/courses/${course.id}/overview`} className="flex flex-1 min-w-0 items-center gap-6">
-                <div className="w-24 h-16 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0">
-                  <img src={course.image} alt={course.title} className="w-full h-full object-cover" />
+        {isLoading ? (
+          <div className="px-6 py-12 text-center">
+            <p className="text-sm font-semibold text-slate-700">Loading courses...</p>
+          </div>
+        ) : courses.length === 0 ? (
+          <div className="px-6 py-12 text-center">
+            <p className="text-sm font-semibold text-slate-700">No courses found.</p>
+            <p className="text-xs text-slate-500">Create your first course to see it listed here.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {courses.map((course) => (
+              <motion.div 
+                key={course.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-6 flex items-center gap-6 hover:bg-slate-50 transition-colors group"
+              >
+                <Link to={`/admin/courses/${course.id}/overview`} className="flex flex-1 min-w-0 items-center gap-6">
+                  <div className="w-24 h-16 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0">
+                    <img src={course.image} alt={course.title} className="w-full h-full object-cover" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{course.title}</h3>
+                    <p className="text-sm text-slate-500">
+                      Published on {course.lastUpdated || 'N/A'} - {(course.studentsCount ?? 0).toLocaleString()} Students
+                    </p>
+                  </div>
+                </Link>
+                <div className="flex items-center gap-4">
+                  <span className={cn(
+                    "text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md",
+                    course.status === 'Published' ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"
+                  )}>
+                    {course.status}
+                  </span>
+                  <button className="p-2 text-slate-400 hover:text-slate-600 hover:bg-white rounded-lg transition-all">
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{course.title}</h3>
-                  <p className="text-sm text-slate-500">
-                    Published on {course.lastUpdated} • {course.studentsCount.toLocaleString()} Students
-                  </p>
-                </div>
-              </Link>
-              <div className="flex items-center gap-4">
-                <span className={cn(
-                  "text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md",
-                  course.status === 'Published' ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"
-                )}>
-                  {course.status}
-                </span>
-                <button className="p-2 text-slate-400 hover:text-slate-600 hover:bg-white rounded-lg transition-all">
-                  <MoreVertical className="w-4 h-4" />
-                </button>
-              </div>
-            </motion.div>
-          ))}
-        </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

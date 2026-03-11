@@ -1,14 +1,25 @@
 import json
+import mimetypes
 import random
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from html import unescape
+from pathlib import Path
+from xml.etree import ElementTree
 
 from fastapi import HTTPException, status
 
-from ..config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TIMEOUT_SECONDS, YOUTUBE_API_KEY
+from ..config import (
+  MAX_VIDEO_UPLOAD_BYTES,
+  OPENAI_API_KEY,
+  OPENAI_MODEL,
+  OPENAI_TIMEOUT_SECONDS,
+  OPENAI_TRANSCRIBE_MODEL,
+  UPLOADS_DIR,
+  YOUTUBE_API_KEY,
+)
 from ..schemas import (
   GenerateAutomatedMessagesInput,
   GenerateAutomatedMessagesResponse,
@@ -39,6 +50,325 @@ STOP_WORDS = {
 }
 
 YOUTUBE_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]{11}$")
+TRANSCRIPT_MAX_CHARS = 12000
+SUMMARY_MAX_CHARS = 300
+KEY_POINTS_MAX = 10
+
+
+def truncate_text(value: str, max_chars: int) -> tuple[str, bool]:
+  cleaned = value.strip()
+  if len(cleaned) <= max_chars:
+    return cleaned, False
+  return cleaned[: max_chars - 3].rstrip() + "...", True
+
+
+def normalize_transcript_text(value: str) -> str:
+  return re.sub(r"\s+", " ", unescape(value)).strip()
+
+
+def pick_preferred_track(tracks: list[ElementTree.Element]) -> ElementTree.Element | None:
+  if not tracks:
+    return None
+
+  for track in tracks:
+    lang = (track.attrib.get("lang_code") or "").lower()
+    if lang.startswith("en"):
+      return track
+
+  return tracks[0]
+
+
+def fetch_youtube_transcript(video_id: str) -> str | None:
+  list_url = f"https://www.youtube.com/api/timedtext?type=list&v={video_id}"
+  request = urllib.request.Request(list_url, headers={"User-Agent": "Mozilla/5.0"})
+  try:
+    with urllib.request.urlopen(request, timeout=OPENAI_TIMEOUT_SECONDS) as response:
+      list_payload = response.read().decode("utf-8", errors="ignore")
+  except (urllib.error.URLError, TimeoutError):
+    return None
+
+  try:
+    list_root = ElementTree.fromstring(list_payload)
+  except ElementTree.ParseError:
+    return None
+
+  tracks = list(list_root.findall("track"))
+  preferred = pick_preferred_track(tracks)
+  if not preferred:
+    return None
+
+  lang_code = preferred.attrib.get("lang_code", "").strip()
+  if not lang_code:
+    return None
+
+  kind = preferred.attrib.get("kind", "").strip()
+  params = {"v": video_id, "lang": lang_code, "fmt": "json3"}
+  if kind:
+    params["kind"] = kind
+
+  transcript_url = f"https://www.youtube.com/api/timedtext?{urllib.parse.urlencode(params)}"
+  transcript_request = urllib.request.Request(transcript_url, headers={"User-Agent": "Mozilla/5.0"})
+  try:
+    with urllib.request.urlopen(transcript_request, timeout=OPENAI_TIMEOUT_SECONDS) as response:
+      transcript_payload = response.read().decode("utf-8", errors="ignore")
+  except (urllib.error.URLError, TimeoutError):
+    transcript_payload = ""
+
+  transcript_text = ""
+  if transcript_payload:
+    try:
+      parsed = json.loads(transcript_payload)
+      events = parsed.get("events")
+      if isinstance(events, list):
+        segments: list[str] = []
+        for event in events:
+          segs = event.get("segs") if isinstance(event, dict) else None
+          if not isinstance(segs, list):
+            continue
+          for seg in segs:
+            if isinstance(seg, dict) and isinstance(seg.get("utf8"), str):
+              segments.append(seg["utf8"])
+        transcript_text = "".join(segments)
+    except (TypeError, json.JSONDecodeError):
+      transcript_text = ""
+
+  if transcript_text:
+    cleaned = normalize_transcript_text(transcript_text)
+    return cleaned or None
+
+  params.pop("fmt", None)
+  transcript_url = f"https://www.youtube.com/api/timedtext?{urllib.parse.urlencode(params)}"
+  transcript_request = urllib.request.Request(transcript_url, headers={"User-Agent": "Mozilla/5.0"})
+  try:
+    with urllib.request.urlopen(transcript_request, timeout=OPENAI_TIMEOUT_SECONDS) as response:
+      xml_payload = response.read().decode("utf-8", errors="ignore")
+  except (urllib.error.URLError, TimeoutError):
+    return None
+
+  try:
+    xml_root = ElementTree.fromstring(xml_payload)
+  except ElementTree.ParseError:
+    return None
+
+  text_nodes = [node.text or "" for node in xml_root.findall("text")]
+  if not text_nodes:
+    return None
+  cleaned = normalize_transcript_text(" ".join(text_nodes))
+  return cleaned or None
+
+
+def resolve_local_upload_path(video_url: str) -> Path | None:
+  parsed = urllib.parse.urlparse(video_url)
+  path = parsed.path or ""
+  marker = "/uploads/lesson-videos/"
+  if marker not in path:
+    return None
+
+  file_name = path.split(marker, 1)[1].split("/", 1)[0]
+  if not file_name:
+    return None
+
+  candidate = (UPLOADS_DIR / "lesson-videos" / file_name).resolve()
+  uploads_root = UPLOADS_DIR.resolve()
+  if not str(candidate).startswith(str(uploads_root)):
+    return None
+  if not candidate.exists():
+    return None
+  return candidate
+
+
+def build_multipart_form_data(
+  fields: dict[str, str],
+  file_field: str,
+  file_name: str,
+  file_bytes: bytes,
+  file_content_type: str,
+) -> tuple[bytes, str]:
+  boundary = f"----EduFlowBoundary{random.randint(0, 1_000_000_000)}"
+  lines: list[bytes] = []
+
+  for name, value in fields.items():
+    lines.append(f"--{boundary}\r\n".encode("utf-8"))
+    lines.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+    lines.append(f"{value}\r\n".encode("utf-8"))
+
+  lines.append(f"--{boundary}\r\n".encode("utf-8"))
+  lines.append(
+    f'Content-Disposition: form-data; name="{file_field}"; filename="{file_name}"\r\n'.encode("utf-8")
+  )
+  lines.append(f"Content-Type: {file_content_type}\r\n\r\n".encode("utf-8"))
+  lines.append(file_bytes)
+  lines.append(b"\r\n")
+  lines.append(f"--{boundary}--\r\n".encode("utf-8"))
+
+  return b"".join(lines), boundary
+
+
+def transcribe_local_video(file_path: Path) -> tuple[str | None, str | None]:
+  if not OPENAI_API_KEY:
+    return None, "OPENAI_API_KEY is not configured."
+
+  if not file_path.exists():
+    return None, "Uploaded video file could not be found."
+
+  file_size = file_path.stat().st_size
+  if file_size == 0:
+    return None, "Uploaded video file is empty."
+  if file_size > MAX_VIDEO_UPLOAD_BYTES:
+    return None, "Uploaded video file is too large to transcribe."
+
+  mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+  file_bytes = file_path.read_bytes()
+  fields = {"model": OPENAI_TRANSCRIBE_MODEL, "response_format": "json"}
+  body, boundary = build_multipart_form_data(fields, "file", file_path.name, file_bytes, mime_type)
+
+  request = urllib.request.Request(
+    "https://api.openai.com/v1/audio/transcriptions",
+    data=body,
+    headers={
+      "Authorization": f"Bearer {OPENAI_API_KEY}",
+      "Content-Type": f"multipart/form-data; boundary={boundary}",
+    },
+    method="POST",
+  )
+
+  try:
+    with urllib.request.urlopen(request, timeout=OPENAI_TIMEOUT_SECONDS) as response:
+      response_text = response.read().decode("utf-8")
+  except urllib.error.HTTPError as error:
+    return None, extract_openai_error_message(error)
+  except (urllib.error.URLError, TimeoutError):
+    return None, "OpenAI transcription service is currently unreachable."
+
+  try:
+    payload = json.loads(response_text)
+  except json.JSONDecodeError:
+    return None, "OpenAI transcription returned an unexpected response format."
+
+  transcript = payload.get("text") if isinstance(payload, dict) else None
+  if not isinstance(transcript, str) or not transcript.strip():
+    return None, "OpenAI transcription returned empty text."
+
+  return normalize_transcript_text(transcript), None
+
+
+def normalize_key_points(raw_points: object) -> list[str]:
+  if not isinstance(raw_points, list):
+    return []
+
+  normalized: list[str] = []
+  for item in raw_points:
+    if not isinstance(item, str):
+      continue
+    cleaned = item.strip().lstrip("-").strip()
+    if cleaned and cleaned not in normalized:
+      normalized.append(cleaned)
+    if len(normalized) >= KEY_POINTS_MAX:
+      break
+
+  return normalized
+
+
+def call_openai_video_summarizer(
+  transcript: str,
+  video_context: dict[str, str],
+  lesson_title: str,
+) -> tuple[str | None, list[str], str | None]:
+  if not OPENAI_API_KEY:
+    return None, [], "OPENAI_API_KEY is not configured."
+
+  trimmed_transcript, was_trimmed = truncate_text(transcript, TRANSCRIPT_MAX_CHARS)
+  lesson_label = lesson_title.strip() or "Untitled lesson"
+
+  system_prompt = "You summarize instructional videos for quiz generation. Return valid JSON only."
+  user_lines = [
+    f"Lesson title: {lesson_label}",
+  ]
+  if video_context.get("title"):
+    user_lines.append(f"Video title: {video_context['title']}")
+  if video_context.get("channelTitle"):
+    user_lines.append(f"Channel: {video_context['channelTitle']}")
+  if video_context.get("duration"):
+    user_lines.append(f"Duration: {video_context['duration']}")
+
+  user_prompt = (
+    "Summarize the following transcript for quiz generation.\n"
+    f"{chr(10).join(user_lines)}\n"
+    "Transcript:\n"
+    f"{trimmed_transcript}\n"
+    "Requirements:\n"
+    f"- Summary must be at most {SUMMARY_MAX_CHARS} characters.\n"
+    "- Provide 6 to 10 key points (short phrases).\n"
+    "Output JSON schema:\n"
+    '{ "summary": "string", "keyPoints": ["string"] }\n'
+  )
+  if was_trimmed:
+    user_prompt += "Note: Transcript was truncated to fit size limits.\n"
+
+  request_body = {
+    "model": OPENAI_MODEL,
+    "response_format": {"type": "json_object"},
+    "messages": [
+      {"role": "system", "content": system_prompt},
+      {"role": "user", "content": user_prompt},
+    ],
+    "temperature": 0.2,
+  }
+
+  request = urllib.request.Request(
+    "https://api.openai.com/v1/chat/completions",
+    data=json.dumps(request_body).encode("utf-8"),
+    headers={
+      "Authorization": f"Bearer {OPENAI_API_KEY}",
+      "Content-Type": "application/json",
+    },
+    method="POST",
+  )
+
+  try:
+    with urllib.request.urlopen(request, timeout=OPENAI_TIMEOUT_SECONDS) as response:
+      response_text = response.read().decode("utf-8")
+  except urllib.error.HTTPError as error:
+    return None, [], extract_openai_error_message(error)
+  except (urllib.error.URLError, TimeoutError):
+    return None, [], "OpenAI summarization service is currently unreachable."
+
+  try:
+    parsed_response = json.loads(response_text)
+    content = parsed_response["choices"][0]["message"]["content"]
+  except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+    return None, [], "OpenAI summarization returned an unexpected response format."
+
+  if not isinstance(content, str):
+    return None, [], "OpenAI summarization returned an empty response."
+
+  parsed_content = parse_json_payload(content)
+  if not parsed_content:
+    return None, [], "OpenAI summarization response could not be parsed."
+
+  summary_raw = parsed_content.get("summary")
+  summary = summary_raw.strip() if isinstance(summary_raw, str) else ""
+  summary, _ = truncate_text(summary, SUMMARY_MAX_CHARS)
+  key_points = normalize_key_points(parsed_content.get("keyPoints"))
+
+  if not summary:
+    return None, key_points, "OpenAI summarization did not include a summary."
+
+  return summary, key_points, None
+
+
+def build_analysis_context(summary: str | None, key_points: list[str]) -> str | None:
+  if not summary and not key_points:
+    return None
+
+  lines: list[str] = []
+  if summary:
+    lines.append(f"Video summary: {summary}")
+  if key_points:
+    lines.append("Key points:")
+    lines.extend([f"- {point}" for point in key_points])
+
+  return "\n".join(lines)
 
 
 def tokenize_title(title: str) -> list[str]:
@@ -497,6 +827,71 @@ def fetch_youtube_video_context(video_url: str) -> dict[str, str]:
   return context
 
 
+def build_metadata_summary(video_context: dict[str, str], lesson_title: str) -> str:
+  parts: list[str] = []
+  title = video_context.get("title", "").strip()
+  description = video_context.get("description", "").strip()
+  if title:
+    parts.append(title)
+  if description:
+    parts.append(description)
+  if not parts and lesson_title.strip():
+    parts.append(lesson_title.strip())
+
+  summary = " - ".join(parts)
+  summary, _ = truncate_text(summary, SUMMARY_MAX_CHARS)
+  return summary
+
+
+def build_video_analysis(
+  payload: GenerateQuizFromVideoInput,
+  video_context: dict[str, str],
+) -> tuple[str | None, str | None, str | None]:
+  video_url = payload.videoUrl.strip()
+  transcript: str | None = None
+  transcript_source: str | None = None
+  transcript_error: str | None = None
+
+  video_id = video_context.get("videoId") or extract_youtube_video_id(video_url)
+  if video_id:
+    transcript = fetch_youtube_transcript(video_id)
+    if transcript:
+      transcript_source = "YouTube captions"
+
+  if not transcript:
+    local_path = resolve_local_upload_path(video_url)
+    if local_path:
+      transcript, transcript_error = transcribe_local_video(local_path)
+      if transcript:
+        transcript_source = "uploaded video file"
+
+  summary: str | None = None
+  key_points: list[str] = []
+  summary_error: str | None = None
+  if transcript:
+    summary, key_points, summary_error = call_openai_video_summarizer(
+      transcript,
+      video_context,
+      payload.lessonTitle,
+    )
+
+  if not summary:
+    summary = build_metadata_summary(video_context, payload.lessonTitle)
+
+  analysis_context = build_analysis_context(summary if transcript else None, key_points)
+  message = None
+  if transcript_source and summary_error:
+    message = f"Quiz generated from {transcript_source}. Summary unavailable."
+  elif transcript_source:
+    message = f"Quiz generated from {transcript_source} summary."
+  elif transcript_error:
+    message = f"Quiz generated from metadata only. {transcript_error}"
+  elif not transcript:
+    message = "Quiz generated from metadata only."
+
+  return summary or None, analysis_context, message
+
+
 def normalize_quiz_questions(
   questions: list[object],
   expected_count: int,
@@ -656,6 +1051,7 @@ def build_fallback_quiz(payload: GenerateQuizFromVideoInput) -> GeneratedQuizPay
 def call_openai_quiz_generator(
   payload: GenerateQuizFromVideoInput,
   video_context: dict[str, str],
+  analysis_context: str | None,
 ) -> tuple[GeneratedQuizPayload | None, str | None]:
   if not OPENAI_API_KEY:
     return None, "OPENAI_API_KEY is not configured."
@@ -675,6 +1071,9 @@ def call_openai_quiz_generator(
     source_lines.append(f"Duration: {video_context['duration']}")
   if video_context.get("description"):
     source_lines.append(f"Video description snippet: {video_context['description']}")
+  if analysis_context:
+    source_lines.append("Video analysis summary:")
+    source_lines.append(analysis_context)
 
   system_prompt = (
     "You are an instructional designer. Generate assessment-quality quiz content from lesson/video context. "
@@ -789,7 +1188,8 @@ def generate_quiz_from_video(payload: GenerateQuizFromVideoInput) -> GenerateQui
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Video URL is required.")
 
   video_context = fetch_youtube_video_context(video_url)
-  quiz_payload, ai_error = call_openai_quiz_generator(payload, video_context)
+  analysis_summary, analysis_context, analysis_message = build_video_analysis(payload, video_context)
+  quiz_payload, ai_error = call_openai_quiz_generator(payload, video_context, analysis_context)
   if not quiz_payload:
     fallback_quiz = build_fallback_quiz(payload)
     return GenerateQuizFromVideoResponse(
@@ -798,9 +1198,12 @@ def generate_quiz_from_video(payload: GenerateQuizFromVideoInput) -> GenerateQui
       message=f"Used fallback quiz generator. Reason: {ai_error}" if ai_error else "Used fallback quiz generator.",
     )
 
+  if analysis_summary:
+    quiz_payload.sourceSummary = analysis_summary
+
   message = None
-  if ai_error:
-    message = ai_error
+  if analysis_message:
+    message = analysis_message
   elif not video_context.get("title"):
     message = "Quiz generated from provided URL and lesson context."
 

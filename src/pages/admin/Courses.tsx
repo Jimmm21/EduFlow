@@ -1,15 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Plus, Users, Star, PencilLine, Clock4, Settings, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { MOCK_COURSES } from '../../mockData';
 import { cn } from '../../utils';
 import type { Course } from '../../types';
-
-const COURSE_API_BASE_URL = (
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  'http://localhost:8001'
-).replace(/\/$/, '');
+import { API_BASE_URL as COURSE_API_BASE_URL } from '../../lib/apiBase';
 
 const extractApiMessage = (payload: unknown): string | undefined => {
   if (!payload || typeof payload !== 'object') {
@@ -29,11 +25,27 @@ const extractApiMessage = (payload: unknown): string | undefined => {
 };
 
 export const AdminCourses = () => {
+  const location = useLocation();
   const [courses, setCourses] = useState<Course[]>(MOCK_COURSES);
   const [isLoading, setIsLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<Course | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const state = location.state as { notice?: string } | null;
+    if (!state?.notice) {
+      return;
+    }
+
+    setNoticeMessage(state.notice);
+    const timer = window.setTimeout(() => {
+      setNoticeMessage(null);
+    }, 3500);
+
+    return () => window.clearTimeout(timer);
+  }, [location.state]);
 
   useEffect(() => {
     const fetchCourses = async () => {
@@ -118,6 +130,11 @@ export const AdminCourses = () => {
           New Course
         </Link>
       </header>
+      {noticeMessage ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+          {noticeMessage}
+        </div>
+      ) : null}
 
       <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-6 border-b border-slate-100 flex items-center justify-between">

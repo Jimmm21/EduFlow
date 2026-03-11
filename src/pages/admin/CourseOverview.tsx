@@ -4,11 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { MOCK_COURSES, MOCK_COURSE_ENROLLMENTS, MOCK_COURSE_REVIEWS, MOCK_ENROLLMENT_REQUESTS } from '../../mockData';
 import { cn } from '../../utils';
 import type { Course } from '../../types';
-
-const COURSE_API_BASE_URL = (
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  'http://localhost:8001'
-).replace(/\/$/, '');
+import { API_BASE_URL as COURSE_API_BASE_URL } from '../../lib/apiBase';
 
 export const AdminCourseOverview = () => {
   const { id } = useParams();

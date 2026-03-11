@@ -57,6 +57,16 @@ async def upload_lesson_video(request: Request, file: UploadFile = File(...)) ->
 
 
 @router.post(
+  "/api/admin/uploads/resource-file",
+  response_model=AssetUploadResponse,
+  status_code=status.HTTP_201_CREATED,
+)
+async def upload_resource_file(request: Request, file: UploadFile = File(...)) -> AssetUploadResponse:
+  asset = await upload_service.save_resource_file(file, str(request.base_url))
+  return AssetUploadResponse(success=True, asset=asset)
+
+
+@router.post(
   "/api/admin/courses",
   response_model=CourseResponse,
   status_code=status.HTTP_201_CREATED,

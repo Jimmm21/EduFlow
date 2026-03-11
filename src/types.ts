@@ -97,6 +97,7 @@ export interface AdminStudentEnrollment {
   enrolledAt: string;
   progress: number;
   learningStatus: LearningStatus;
+  studentRating?: number;
 }
 
 export interface CourseReview {

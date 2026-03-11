@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Save,
@@ -17,14 +17,10 @@ import {
 } from 'lucide-react';
 import type { Lecture, Section } from '../../types';
 import { findLectureInSections, getCourseSectionsDraft, saveCourseSectionsDraft } from '../../admin/courseDraftStore';
+import { API_BASE_URL as COURSE_API_BASE_URL } from '../../lib/apiBase';
 
 const QUIZ_CONTENT_PREFIX = '__QUIZ_JSON__';
 const RESOURCE_CONTENT_PREFIX = '__RESOURCE_JSON__';
-const COURSE_API_BASE_URL = (
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  'http://localhost:8001'
-).replace(/\/$/, '');
-
 type QuizQuestionType = 'Multiple Choice' | 'True / False';
 type QuizGenerationType = 'Multiple Choice' | 'True / False' | 'Mixed';
 
@@ -366,10 +362,10 @@ const parseResourcesContent = (rawContent: string): ResourceContent => {
           title: item.title || '',
           kind: item.kind === 'link' ? 'link' : 'file',
           size: item.size || '',
-          url: item.url || '',
+          url: typeof item.url === 'string' ? item.url.trim() : '',
           fileName: item.fileName || '',
           mimeType: item.mimeType || '',
-          fileData: item.fileData || '',
+          fileData: typeof item.url === 'string' && item.url.trim() ? '' : item.fileData || '',
         })),
       };
     } catch {
@@ -535,7 +531,12 @@ const cloneQuestion = (question: QuizQuestion): QuizQuestion => ({
 export const LessonEditor = () => {
   const navigate = useNavigate();
   const { courseId, sectionId, lectureId } = useParams();
-  const courseKey = courseId ?? 'new';
+  const [searchParams] = useSearchParams();
+  const draftId = (searchParams.get('draft') ?? '').trim();
+  const courseKey =
+    courseId === 'new'
+      ? (draftId ? `new:${draftId}` : 'new')
+      : courseId ?? 'new';
   const [sections, setSections] = useState<Section[]>(() => getCourseSectionsDraft(courseKey));
   const [uploadedVideoName, setUploadedVideoName] = useState('');
   const [youtubeUrlInput, setYoutubeUrlInput] = useState('');
@@ -544,15 +545,30 @@ export const LessonEditor = () => {
   const [lessonVideoUploadError, setLessonVideoUploadError] = useState<string | null>(null);
   const [isUploadingLessonVideo, setIsUploadingLessonVideo] = useState(false);
   const [resourceSaveMessage, setResourceSaveMessage] = useState<string | null>(null);
+  const [resourceUploadError, setResourceUploadError] = useState<string | null>(null);
+  const [resourceUploadingId, setResourceUploadingId] = useState<string | null>(null);
   const [quizVideoUrlInput, setQuizVideoUrlInput] = useState('');
   const [quizGenerationType, setQuizGenerationType] = useState<QuizGenerationType>('Multiple Choice');
   const [quizGenerationCount, setQuizGenerationCount] = useState(5);
   const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
+  const [isUploadingQuizVideo, setIsUploadingQuizVideo] = useState(false);
+  const [quizUploadedFileName, setQuizUploadedFileName] = useState('');
+  const [quizUploadError, setQuizUploadError] = useState<string | null>(null);
   const [quizAiError, setQuizAiError] = useState<string | null>(null);
   const [quizAiMessage, setQuizAiMessage] = useState<string | null>(null);
   const [quizSaveMessage, setQuizSaveMessage] = useState<string | null>(null);
 
-  const courseBuilderPath = courseKey === 'new' ? '/admin/courses/new?step=2' : `/admin/courses/${courseKey}?step=2`;
+  const courseBuilderPath = (() => {
+    if (courseId === 'new') {
+      const params = new URLSearchParams();
+      params.set('step', '2');
+      if (draftId) {
+        params.set('draft', draftId);
+      }
+      return `/admin/courses/new?${params.toString()}`;
+    }
+    return `/admin/courses/${courseId ?? 'new'}?step=2`;
+  })();
 
   const lessonRecord = useMemo(() => {
     if (!sectionId || !lectureId) {
@@ -618,6 +634,8 @@ export const LessonEditor = () => {
   useEffect(() => {
     setResourcesDraft(resourcesFromLecture);
     setResourceSaveMessage(null);
+    setResourceUploadError(null);
+    setResourceUploadingId(null);
   }, [lecture.id, resourcesFromLecture]);
 
   useEffect(() => {
@@ -646,6 +664,9 @@ export const LessonEditor = () => {
     setQuizVideoUrlInput(lecture.videoUrl ?? '');
     setQuizGenerationType('Multiple Choice');
     setQuizGenerationCount(5);
+    setIsUploadingQuizVideo(false);
+    setQuizUploadedFileName('');
+    setQuizUploadError(null);
     setQuizAiError(null);
     setQuizAiMessage(null);
     setQuizSaveMessage(null);
@@ -675,8 +696,16 @@ export const LessonEditor = () => {
   };
 
   const persistResourcesDraft = () => {
+    const normalizedResources: ResourceContent = {
+      items: resourcesDraft.items.map((item) => ({
+        ...item,
+        fileData: item.url ? '' : item.fileData || '',
+      })),
+    };
+
+    setResourcesDraft(normalizedResources);
     updateLecture({
-      content: serializeResourcesContent(resourcesDraft),
+      content: serializeResourcesContent(normalizedResources),
       duration: undefined,
       videoUrl: undefined,
     });
@@ -749,6 +778,57 @@ export const LessonEditor = () => {
       setQuizAiError('Cannot reach AI service. Please try again.');
     } finally {
       setIsGeneratingQuiz(false);
+    }
+  };
+
+  const handleQuizVideoUpload = async (file: File) => {
+    setQuizUploadError(null);
+    setIsUploadingQuizVideo(true);
+    setQuizUploadedFileName(file.name);
+    setQuizAiError(null);
+    setQuizAiMessage(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch(`${COURSE_API_BASE_URL}/api/admin/uploads/lesson-video`, {
+        method: 'POST',
+        body: formData,
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setQuizUploadedFileName('');
+        setQuizUploadError(extractApiMessage(payload) ?? 'Unable to upload video file.');
+        return;
+      }
+
+      if (!payload || typeof payload !== 'object') {
+        setQuizUploadedFileName('');
+        setQuizUploadError('Unexpected response from video upload service.');
+        return;
+      }
+
+      const record = payload as Record<string, unknown>;
+      const asset = record.asset as Record<string, unknown> | null;
+      const uploadedUrl = asset && typeof asset.url === 'string' ? asset.url : '';
+      const uploadedFileName = asset && typeof asset.fileName === 'string' ? asset.fileName : file.name;
+
+      if (record.success !== true || !uploadedUrl) {
+        setQuizUploadedFileName('');
+        setQuizUploadError('Unexpected response from video upload service.');
+        return;
+      }
+
+      setQuizUploadedFileName(uploadedFileName);
+      setQuizVideoUrlInput(uploadedUrl);
+      updateLecture({ videoUrl: uploadedUrl });
+    } catch {
+      setQuizUploadedFileName('');
+      setQuizUploadError('Cannot reach upload service. Please try again.');
+    } finally {
+      setIsUploadingQuizVideo(false);
     }
   };
 
@@ -911,26 +991,62 @@ export const LessonEditor = () => {
     }));
   };
 
-  const handleResourceFileUpload = (resourceId: string, event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleResourceFileUpload = async (resourceId: string, event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
       return;
     }
 
+    const input = event.target;
     setResourceSaveMessage(null);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const fileData = typeof reader.result === 'string' ? reader.result : '';
+    setResourceUploadError(null);
+    setResourceUploadingId(resourceId);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch(`${COURSE_API_BASE_URL}/api/admin/uploads/resource-file`, {
+        method: 'POST',
+        body: formData,
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setResourceUploadError(extractApiMessage(payload) ?? 'Unable to upload resource file.');
+        return;
+      }
+
+      if (!payload || typeof payload !== 'object') {
+        setResourceUploadError('Unexpected response from resource upload service.');
+        return;
+      }
+
+      const record = payload as Record<string, unknown>;
+      const asset = record.asset as Record<string, unknown> | null;
+      const uploadedUrl = asset && typeof asset.url === 'string' ? asset.url : '';
+      const uploadedFileName = asset && typeof asset.fileName === 'string' ? asset.fileName : file.name;
+
+      if (record.success !== true || !uploadedUrl) {
+        setResourceUploadError('Unexpected response from resource upload service.');
+        return;
+      }
+
       updateResource(resourceId, {
         title: file.name,
         size: formatFileSize(file.size),
-        fileName: file.name,
+        fileName: uploadedFileName,
         mimeType: file.type || 'application/octet-stream',
-        fileData,
+        url: uploadedUrl,
+        fileData: '',
       });
-    };
-    reader.readAsDataURL(file);
-    event.target.value = '';
+      setResourceSaveMessage('File uploaded. Save resources to apply.');
+    } catch {
+      setResourceUploadError('Cannot reach upload service. Please try again.');
+    } finally {
+      setResourceUploadingId(null);
+      input.value = '';
+    }
   };
 
   const youtubeEmbedUrl = useMemo(() => {
@@ -991,6 +1107,8 @@ export const LessonEditor = () => {
                     value={quizVideoUrlInput}
                     onChange={(event) => {
                       setQuizVideoUrlInput(event.target.value);
+                      setQuizUploadedFileName('');
+                      setQuizUploadError(null);
                       setQuizAiError(null);
                       setQuizAiMessage(null);
                     }}
@@ -1044,9 +1162,44 @@ export const LessonEditor = () => {
                   {isGeneratingQuiz ? 'Generating...' : 'Generate Quiz'}
                 </button>
               </div>
+              <div className="flex flex-col gap-3 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-slate-700">Upload Video File (Optional)</p>
+                  <p className="text-xs text-slate-500">Upload a video file and we will use it as the quiz source.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    id="quiz-video-upload"
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={async (event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) {
+                        return;
+                      }
+                      await handleQuizVideoUpload(file);
+                      event.target.value = '';
+                    }}
+                  />
+                  <label
+                    htmlFor="quiz-video-upload"
+                    className={`inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-600 transition-colors ${
+                      isUploadingQuizVideo ? 'cursor-not-allowed opacity-70' : 'cursor-pointer hover:bg-slate-100'
+                    }`}
+                  >
+                    <Upload className="h-4 w-4 text-slate-400" />
+                    {isUploadingQuizVideo ? 'Uploading...' : 'Upload Video'}
+                  </label>
+                  {quizUploadedFileName ? (
+                    <span className="text-[11px] font-medium text-indigo-600">{quizUploadedFileName}</span>
+                  ) : null}
+                </div>
+              </div>
               <p className="text-xs text-slate-500">
-                Paste a YouTube link to let AI analyze metadata and generate quiz questions with answers.
+                Paste a YouTube link or upload a video file to let AI analyze metadata and generate quiz questions with answers.
               </p>
+              {quizUploadError ? <p className="text-sm font-medium text-red-600">{quizUploadError}</p> : null}
               {quizAiError ? <p className="text-sm font-medium text-red-600">{quizAiError}</p> : null}
               {quizAiMessage ? <p className="text-sm font-medium text-emerald-600">{quizAiMessage}</p> : null}
             </div>
@@ -1352,8 +1505,10 @@ export const LessonEditor = () => {
                       <p className="text-sm text-slate-500">No resources added yet.</p>
                     </div>
                   ) : (
-                    resourcesDraft.items.map((resource) => (
-                      <div key={resource.id} className="bg-white border border-slate-200 rounded-xl p-3 flex items-start gap-3">
+                    resourcesDraft.items.map((resource) => {
+                      const isResourceUploading = resourceUploadingId === resource.id;
+                      return (
+                        <div key={resource.id} className="bg-white border border-slate-200 rounded-xl p-3 flex items-start gap-3">
                         <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500">
                           {resource.kind === 'link' ? <Link2 className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
                         </div>
@@ -1403,12 +1558,17 @@ export const LessonEditor = () => {
 
                           {resource.kind === 'file' ? (
                             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                              <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700">
+                              <label
+                                className={`inline-flex items-center gap-2 text-sm font-semibold ${
+                                  isResourceUploading ? 'cursor-wait text-slate-400' : 'cursor-pointer text-indigo-600 hover:text-indigo-700'
+                                }`}
+                              >
                                 <Upload className="w-4 h-4" />
-                                {resource.fileName ? 'Replace File' : 'Upload File'}
+                                {isResourceUploading ? 'Uploading...' : resource.fileName ? 'Replace File' : 'Upload File'}
                                 <input
                                   type="file"
                                   className="hidden"
+                                  disabled={isResourceUploading}
                                   onChange={(event) => handleResourceFileUpload(resource.id, event)}
                                 />
                               </label>
@@ -1434,15 +1594,18 @@ export const LessonEditor = () => {
                           className="text-slate-400 hover:text-red-600 p-1"
                           aria-label="Remove resource"
                         >
-                          <Trash2 className="w-4 h-4" />
+s                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
 
                 <div className="px-4 pb-4 flex items-center justify-end gap-3">
-                  {resourceSaveMessage ? (
+                  {resourceUploadError ? (
+                    <p className="mr-auto text-sm font-medium text-red-600">{resourceUploadError}</p>
+                  ) : resourceSaveMessage ? (
                     <p className="mr-auto text-sm font-medium text-emerald-600">{resourceSaveMessage}</p>
                   ) : null}
                   <button
