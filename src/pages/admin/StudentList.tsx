@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Filter, Star, Trash2 } from 'lucide-react';
-import { MOCK_COURSE_ENROLLMENTS, MOCK_COURSE_REVIEWS, MOCK_COURSES } from '../../mockData';
+import { Bell, Filter, Star, Trash2 } from 'lucide-react';
 import type { AdminStudentEnrollment, Course, LearningStatus } from '../../types';
 import { cn } from '../../utils';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -8,6 +7,7 @@ import {
   fetchAdminCourses,
   fetchAdminStudentEnrollments,
   removeAdminStudentEnrollment,
+  sendAdminStudentReminder,
 } from '../../lib/courseApi';
 
 const statusStyles: Record<LearningStatus, string> = {
@@ -16,43 +16,17 @@ const statusStyles: Record<LearningStatus, string> = {
   wishlist: 'bg-slate-100 text-slate-600',
 };
 
-const buildRatingKey = (courseId: string, studentName: string) =>
-  `${courseId}::${studentName.trim().toLowerCase()}`;
-
-const toFallbackEnrollments = (courses: Course[]): AdminStudentEnrollment[] => {
-  const titleByCourseId = new Map(courses.map((course) => [course.id, course.title]));
-  const ratingLookup = new Map(
-    MOCK_COURSE_REVIEWS.map((review) => [
-      buildRatingKey(review.courseId, review.studentName),
-      review.rating,
-    ]),
-  );
-
-  return MOCK_COURSE_ENROLLMENTS.map((enrollment) => ({
-    id: enrollment.id,
-    courseId: enrollment.courseId,
-    courseTitle: titleByCourseId.get(enrollment.courseId) ?? 'Unknown course',
-    studentId: `student-${enrollment.id}`,
-    studentName: enrollment.studentName,
-    studentEmail: enrollment.studentEmail,
-    enrolledAt: enrollment.enrolledAt,
-    progress: enrollment.progress,
-    learningStatus: enrollment.progress >= 100 ? 'completed' : 'in-progress',
-    studentRating: ratingLookup.get(buildRatingKey(enrollment.courseId, enrollment.studentName)),
-  }));
-};
-
 export const AdminStudentList = () => {
   const [selectedCourseId, setSelectedCourseId] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState<'all' | LearningStatus>('all');
-  const [courses, setCourses] = useState<Course[]>(MOCK_COURSES);
-  const [enrollments, setEnrollments] = useState<AdminStudentEnrollment[]>(
-    toFallbackEnrollments(MOCK_COURSES),
-  );
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [enrollments, setEnrollments] = useState<AdminStudentEnrollment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [actionEnrollmentId, setActionEnrollmentId] = useState<string | null>(null);
+  const [remindEnrollmentId, setRemindEnrollmentId] = useState<string | null>(null);
   const [removalTarget, setRemovalTarget] = useState<AdminStudentEnrollment | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -67,8 +41,8 @@ export const AdminStudentList = () => {
         setCourses(adminCourses);
         setEnrollments(studentEnrollments);
       } catch (loadError) {
-        setCourses(MOCK_COURSES);
-        setEnrollments(toFallbackEnrollments(MOCK_COURSES));
+        setCourses([]);
+        setEnrollments([]);
         setError(loadError instanceof Error ? loadError.message : 'Unable to load student list from backend.');
       } finally {
         setIsLoading(false);
@@ -100,22 +74,8 @@ export const AdminStudentList = () => {
     [filteredEnrollments],
   );
 
-  const reviewRatings = useMemo(
-    () =>
-      new Map(
-        MOCK_COURSE_REVIEWS.map((review) => [
-          buildRatingKey(review.courseId, review.studentName),
-          review.rating,
-        ]),
-      ),
-    [],
-  );
-
   const getRatingValue = (enrollment: AdminStudentEnrollment) => {
-    const rawRating =
-      typeof enrollment.studentRating === 'number'
-        ? enrollment.studentRating
-        : reviewRatings.get(buildRatingKey(enrollment.courseId, enrollment.studentName));
+    const rawRating = typeof enrollment.studentRating === 'number' ? enrollment.studentRating : null;
     if (typeof rawRating !== 'number') {
       return null;
     }
@@ -134,6 +94,7 @@ export const AdminStudentList = () => {
 
     setActionEnrollmentId(removalTarget.id);
     setError(null);
+    setSuccessMessage(null);
 
     try {
       await removeAdminStudentEnrollment(removalTarget.id);
@@ -145,6 +106,21 @@ export const AdminStudentList = () => {
       setError(removeError instanceof Error ? removeError.message : 'Unable to remove student from the course.');
     } finally {
       setActionEnrollmentId(null);
+    }
+  };
+
+  const remindStudentEnrollment = async (enrollment: AdminStudentEnrollment) => {
+    setRemindEnrollmentId(enrollment.id);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const message = await sendAdminStudentReminder(enrollment.id);
+      setSuccessMessage(message);
+    } catch (remindError) {
+      setError(remindError instanceof Error ? remindError.message : 'Unable to send reminder email.');
+    } finally {
+      setRemindEnrollmentId(null);
     }
   };
 
@@ -190,6 +166,7 @@ export const AdminStudentList = () => {
       </header>
 
       {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}
+      {successMessage ? <p className="text-sm font-medium text-emerald-600">{successMessage}</p> : null}
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <article className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -245,6 +222,7 @@ export const AdminStudentList = () => {
               <tbody className="divide-y divide-slate-100">
                 {filteredEnrollments.map((enrollment) => {
                   const isRemoving = actionEnrollmentId === enrollment.id;
+                  const isReminding = remindEnrollmentId === enrollment.id;
                   const ratingValue = getRatingValue(enrollment);
                   const progressValue = Math.max(0, Math.min(100, enrollment.progress));
                   const isCompleted = enrollment.learningStatus === 'completed';
@@ -300,16 +278,28 @@ export const AdminStudentList = () => {
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => openRemoveStudentConfirmation(enrollment)}
-                          disabled={isRemoving}
-                          className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          {isRemoving ? 'Removing...' : 'Remove'}
-                        </button>
+                      <td className="px-6 py-4 text-right min-w-[220px]">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => remindStudentEnrollment(enrollment)}
+                            disabled={isReminding || isRemoving || isCompleted}
+                            title={isCompleted ? 'Completed courses do not need reminders.' : 'Send reminder email'}
+                            className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-70 whitespace-nowrap"
+                          >
+                            <Bell className="h-4 w-4" />
+                            {isReminding ? 'Sending...' : 'Remind'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openRemoveStudentConfirmation(enrollment)}
+                            disabled={isRemoving || isReminding}
+                            className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-70 whitespace-nowrap"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            {isRemoving ? 'Removing...' : 'Remove'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

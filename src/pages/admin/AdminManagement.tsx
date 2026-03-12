@@ -1,16 +1,18 @@
 import React, { useMemo, useState } from 'react';
-import { Shield, UserPlus, Users, Mail, KeyRound, BadgeCheck } from 'lucide-react';
+import { Shield, UserPlus, Users, Mail, KeyRound, BadgeCheck, Trash2 } from 'lucide-react';
 import { useAuth } from '../../auth/AuthContext';
 import { cn } from '../../utils';
 
 export const AdminManagement = () => {
-  const { user, users, createAdminAccount } = useAuth();
+  const { user, users, createAdminAccount, deleteAdminAccount } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
 
   const admins = useMemo(
     () =>
@@ -59,6 +61,28 @@ export const AdminManagement = () => {
     setIsSubmitting(false);
   };
 
+  const handleDeleteAdmin = async (adminId: string, adminName: string) => {
+    const confirmed = window.confirm(`Delete admin account for ${adminName}? This cannot be undone.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDeletingId(adminId);
+    setError(null);
+    setSuccessMessage(null);
+    setDeleteMessage(null);
+
+    const result = await deleteAdminAccount(adminId);
+    setIsDeletingId(null);
+
+    if (!result.success) {
+      setError(result.message ?? 'Unable to delete admin account.');
+      return;
+    }
+
+    setDeleteMessage(result.message ?? `${adminName} account deleted.`);
+  };
+
   return (
     <div className="mx-auto max-w-7xl space-y-8">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -105,6 +129,7 @@ export const AdminManagement = () => {
             {admins.map((admin) => {
               const isCurrentUser = admin.id === user?.id;
               const isSeedAdmin = admin.id.startsWith('seed-');
+              const canDelete = !isCurrentUser && !isSeedAdmin;
 
               return (
                 <article key={admin.id} className="flex flex-col gap-4 px-6 py-5 md:flex-row md:items-center md:justify-between">
@@ -127,9 +152,22 @@ export const AdminManagement = () => {
                     </div>
                     <p className="mt-2 text-sm text-slate-500">{admin.email}</p>
                   </div>
-                  <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-600">
-                    <BadgeCheck className="h-4 w-4 text-indigo-600" />
-                    Full admin access
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-600">
+                      <BadgeCheck className="h-4 w-4 text-indigo-600" />
+                      Full admin access
+                    </div>
+                    {canDelete ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAdmin(admin.id, admin.name)}
+                        disabled={isDeletingId === admin.id}
+                        className="inline-flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-600 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        {isDeletingId === admin.id ? 'Deleting...' : 'Delete'}
+                      </button>
+                    ) : null}
                   </div>
                 </article>
               );
@@ -197,6 +235,7 @@ export const AdminManagement = () => {
 
             {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}
             {successMessage ? <p className="text-sm font-medium text-emerald-600">{successMessage}</p> : null}
+            {deleteMessage ? <p className="text-sm font-medium text-emerald-600">{deleteMessage}</p> : null}
 
             <button
               type="submit"

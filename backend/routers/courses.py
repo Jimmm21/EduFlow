@@ -2,6 +2,7 @@ from fastapi import APIRouter, File, Request, UploadFile, status
 
 from ..schemas import (
   AdminPerformanceResponse,
+  ActionResponse,
   AssetUploadResponse,
   CourseEnrollmentInput,
   CourseRatingInput,
@@ -16,6 +17,8 @@ from ..schemas import (
   GenerateCourseCopyResponse,
   GenerateQuizFromVideoInput,
   GenerateQuizFromVideoResponse,
+  TranscriptionCheckInput,
+  TranscriptionCheckResponse,
   QuizAttemptResponse,
   QuizLectureResponse,
   StudentEnrollmentResponse,
@@ -102,6 +105,16 @@ def generate_quiz_from_video(payload: GenerateQuizFromVideoInput) -> GenerateQui
   return ai_content_service.generate_quiz_from_video(payload)
 
 
+@router.post(
+  "/api/admin/transcription-check",
+  response_model=TranscriptionCheckResponse,
+  status_code=status.HTTP_200_OK,
+)
+def transcription_check(payload: TranscriptionCheckInput) -> TranscriptionCheckResponse:
+  details = ai_content_service.check_transcription_options(payload.videoUrl)
+  return TranscriptionCheckResponse(success=True, details=details)
+
+
 @router.get("/api/courses/{course_id}/lectures/{lecture_id}/quiz", response_model=QuizLectureResponse)
 def get_lecture_quiz(course_id: str, lecture_id: str, student_id: str) -> QuizLectureResponse:
   quiz = quiz_service.get_lecture_quiz(course_id, lecture_id, student_id)
@@ -177,6 +190,16 @@ def remove_student_enrollment(enrollment_id: str) -> StudentEnrollmentResponse:
     success=True,
     message=f"Removed {removed['studentName']} from {removed['courseTitle']}.",
   )
+
+
+@router.post(
+  "/api/admin/student-enrollments/{enrollment_id}/remind",
+  response_model=ActionResponse,
+  status_code=status.HTTP_200_OK,
+)
+def remind_student_enrollment(enrollment_id: str) -> ActionResponse:
+  message = course_service.send_enrollment_reminder(enrollment_id)
+  return ActionResponse(success=True, message=message)
 
 
 @router.patch("/api/admin/enrollment-requests/{request_id}", response_model=EnrollmentRequestResponse)

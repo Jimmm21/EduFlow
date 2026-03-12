@@ -700,6 +700,20 @@ export const removeAdminStudentEnrollment = async (enrollmentId: string) => {
   return extractApiMessage(payload) ?? 'Student removed from the course.';
 };
 
+export const sendAdminStudentReminder = async (enrollmentId: string) => {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/api/admin/student-enrollments/${encodeURIComponent(enrollmentId)}/remind`,
+    { method: 'POST' },
+  );
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(extractApiMessage(payload) ?? 'Unable to send reminder email.');
+  }
+
+  return extractApiMessage(payload) ?? 'Reminder email sent.';
+};
+
 export const updateAdminEnrollmentRequest = async (
   requestId: string,
   status: EnrollmentRequestStatus,

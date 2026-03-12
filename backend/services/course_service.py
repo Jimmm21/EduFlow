@@ -690,30 +690,44 @@ def list_student_enrollments(course_id: str | None = None) -> list[dict[str, Any
     with get_connection(dict_row) as connection:
       with connection.cursor() as cursor:
         base_query = """
-          SELECT
-            ce.id::text AS id,
-            ce.course_id,
-            c.title AS course_title,
-            ce.student_id::text AS student_id,
-            u.name AS student_name,
-            u.email AS student_email,
-            ce.enrolled_at,
-            COALESCE(scp.progress, ce.progress, 0) AS progress,
-            COALESCE(
-              scp.status,
-              CASE WHEN COALESCE(scp.progress, ce.progress, 0) >= 100 THEN 'completed' ELSE 'in-progress' END
-            ) AS learning_status,
-            cr.rating AS student_rating
-          FROM course_enrollments ce
-          INNER JOIN courses c ON c.id = ce.course_id
-          INNER JOIN app_users u ON u.id = ce.student_id
-          LEFT JOIN student_course_progress scp
-            ON scp.user_id = ce.student_id
-            AND scp.course_id = ce.course_id
-          LEFT JOIN course_reviews cr
-            ON cr.course_id = ce.course_id
-            AND cr.student_id = ce.student_id
-        """
+            SELECT
+              ce.id::text AS id,
+              ce.course_id,
+              c.title AS course_title,
+              ce.student_id::text AS student_id,
+              u.name AS student_name,
+              u.email AS student_email,
+              ce.enrolled_at,
+              CASE
+                WHEN tl.total_lectures > 0
+                  THEN ROUND((cl.completed_lectures::numeric / tl.total_lectures) * 100)::int
+                ELSE 0
+              END AS progress,
+              CASE
+                WHEN tl.total_lectures > 0 AND cl.completed_lectures >= tl.total_lectures THEN 'completed'
+                ELSE 'in-progress'
+              END AS learning_status,
+              cr.rating AS student_rating
+            FROM course_enrollments ce
+            INNER JOIN courses c ON c.id = ce.course_id
+            INNER JOIN app_users u ON u.id = ce.student_id
+            LEFT JOIN LATERAL (
+              SELECT COUNT(*)::int AS total_lectures
+              FROM lectures l
+              INNER JOIN course_sections cs ON cs.id = l.section_id
+              WHERE cs.course_id = ce.course_id
+            ) tl ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT COUNT(*)::int AS completed_lectures
+              FROM student_lecture_progress slp
+              WHERE slp.user_id = ce.student_id
+                AND slp.course_id = ce.course_id
+                AND slp.status = 'completed'
+            ) cl ON TRUE
+            LEFT JOIN course_reviews cr
+              ON cr.course_id = ce.course_id
+              AND cr.student_id = ce.student_id
+          """
         params: list[Any] = []
         if course_id:
           base_query += " WHERE ce.course_id = %s"
@@ -814,6 +828,67 @@ def remove_student_enrollment(enrollment_id: str) -> dict[str, str]:
     "studentName": str(enrollment_row.get("student_name") or "Student"),
     "courseTitle": str(enrollment_row.get("course_title") or "the course"),
   }
+
+
+def send_enrollment_reminder(enrollment_id: str) -> str:
+  normalized_enrollment_id = enrollment_id.strip()
+  if not normalized_enrollment_id:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Enrollment ID is required.")
+
+  try:
+    with get_connection(dict_row) as connection:
+      with connection.cursor() as cursor:
+        cursor.execute(
+          """
+          SELECT
+            ce.id::text AS id,
+            c.title AS course_title,
+            c.reminder_message AS course_reminder_message,
+            u.email AS student_email,
+            COALESCE(
+              scp.status,
+              CASE WHEN COALESCE(scp.progress, ce.progress, 0) >= 100 THEN 'completed' ELSE 'in-progress' END
+            ) AS learning_status
+          FROM course_enrollments ce
+          INNER JOIN courses c ON c.id = ce.course_id
+          INNER JOIN app_users u ON u.id = ce.student_id
+          LEFT JOIN student_course_progress scp
+            ON scp.user_id = ce.student_id
+            AND scp.course_id = ce.course_id
+          WHERE ce.id::text = %s;
+          """,
+          (normalized_enrollment_id,),
+        )
+        enrollment_row = cursor.fetchone()
+  except psycopg.OperationalError as error:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Database is unavailable.",
+    ) from error
+  except psycopg.Error as error:
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail="Unable to load student enrollment.",
+    ) from error
+
+  if not enrollment_row:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student enrollment not found.")
+
+  if enrollment_row.get("learning_status") == "completed":
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Student already completed this course.")
+
+  sent, email_error = email_service.send_course_reminder_email(
+    student_email=str(enrollment_row.get("student_email") or "").strip(),
+    course_title=str(enrollment_row.get("course_title") or "").strip(),
+    reminder_message=str(enrollment_row.get("course_reminder_message") or "").strip(),
+  )
+  if not sent:
+    raise HTTPException(
+      status_code=status.HTTP_502_BAD_GATEWAY,
+      detail=email_error or "Unable to send reminder email.",
+    )
+
+  return "Reminder email sent."
 
 
 def ensure_student_exists(cursor: psycopg.Cursor[dict[str, Any]], student_id: str) -> None:
@@ -1046,10 +1121,31 @@ def list_student_learning_courses(student_id: str) -> CourseResponse:
             c.students_count,
             c.rating,
             c.last_updated,
-            scp.progress,
-            scp.status AS learning_status
+            CASE
+              WHEN tl.total_lectures > 0
+                THEN ROUND((cl.completed_lectures::numeric / tl.total_lectures) * 100)::int
+              ELSE 0
+            END AS progress,
+            CASE
+              WHEN scp.status = 'wishlist' THEN 'wishlist'
+              WHEN tl.total_lectures > 0 AND cl.completed_lectures >= tl.total_lectures THEN 'completed'
+              ELSE 'in-progress'
+            END AS learning_status
           FROM student_course_progress scp
           INNER JOIN courses c ON c.id = scp.course_id
+          LEFT JOIN LATERAL (
+            SELECT COUNT(*)::int AS total_lectures
+            FROM lectures l
+            INNER JOIN course_sections cs ON cs.id = l.section_id
+            WHERE cs.course_id = c.id
+          ) tl ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT COUNT(*)::int AS completed_lectures
+            FROM student_lecture_progress slp
+            WHERE slp.user_id = scp.user_id
+              AND slp.course_id = c.id
+              AND slp.status = 'completed'
+          ) cl ON TRUE
           WHERE scp.user_id = %s
           ORDER BY scp.updated_at DESC, c.created_at DESC;
           """,

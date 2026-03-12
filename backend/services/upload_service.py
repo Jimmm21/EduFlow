@@ -9,6 +9,7 @@ IMAGE_UPLOAD_DIR = UPLOADS_DIR / "course-images"
 VIDEO_UPLOAD_DIR = UPLOADS_DIR / "promo-videos"
 LESSON_VIDEO_UPLOAD_DIR = UPLOADS_DIR / "lesson-videos"
 RESOURCE_UPLOAD_DIR = UPLOADS_DIR / "resource-files"
+AVATAR_UPLOAD_DIR = UPLOADS_DIR / "avatars"
 
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".m4v", ".avi"}
@@ -22,6 +23,7 @@ def ensure_upload_directories() -> None:
   VIDEO_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
   LESSON_VIDEO_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
   RESOURCE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+  AVATAR_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def sanitize_extension(file_name: str, allowed_extensions: set[str], fallback_extension: str) -> str:
@@ -89,6 +91,20 @@ async def save_resource_file(file: UploadFile, base_url: str) -> dict[str, str]:
     max_size_bytes=MAX_RESOURCE_UPLOAD_BYTES,
     fallback_extension=FALLBACK_RESOURCE_EXTENSION,
     error_label="Resource file",
+  )
+
+
+async def save_avatar_image(file: UploadFile, base_url: str) -> dict[str, str]:
+  return await _save_file(
+    file=file,
+    base_url=base_url,
+    upload_directory=AVATAR_UPLOAD_DIR,
+    upload_subpath="avatars",
+    max_size_bytes=MAX_IMAGE_UPLOAD_BYTES,
+    expected_mime_prefix="image/",
+    allowed_extensions=ALLOWED_IMAGE_EXTENSIONS,
+    fallback_extension=FALLBACK_IMAGE_EXTENSION,
+    error_label="Avatar image",
   )
 
 

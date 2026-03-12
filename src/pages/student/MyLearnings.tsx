@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Play, Clock3, CheckCircle2, Trophy, Flame, Heart } from 'lucide-react';
-import { MOCK_COURSES, MOCK_STUDENT_COURSE_PROGRESS } from '../../mockData';
+import { Play, Clock3, CheckCircle2, Heart } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../utils';
@@ -16,6 +15,27 @@ const TABS: { id: LearningTab; label: string }[] = [
   { id: 'completed', label: 'Completed' },
   { id: 'wishlist', label: 'Wishlist' },
 ];
+
+const computeCourseProgress = (course: Course) => {
+  const normalizedProgress = typeof course.progress === 'number'
+    ? Math.max(0, Math.min(100, Math.round(course.progress)))
+    : null;
+  const totalLectures = course.sections.reduce((count, section) => count + section.lectures.length, 0);
+  if (totalLectures === 0) {
+    return normalizedProgress ?? 0;
+  }
+
+  const completedLectureIdSet = new Set(course.completedLectureIds ?? []);
+  const completedLectures = course.sections.reduce(
+    (count, section) => count + section.lectures.filter((lecture) => completedLectureIdSet.has(lecture.id)).length,
+    0,
+  );
+  const computed = Math.round((completedLectures / totalLectures) * 100);
+  if (completedLectureIdSet.size === 0 && normalizedProgress !== null) {
+    return normalizedProgress;
+  }
+  return computed;
+};
 
 export const MyLearnings = () => {
   const { user } = useAuth();
@@ -33,22 +53,7 @@ export const MyLearnings = () => {
         const courses = await fetchStudentLearningCourses(user.id);
         setLearningCourses(courses);
       } catch {
-        const fallbackCourses = MOCK_STUDENT_COURSE_PROGRESS
-          .map((progressInfo) => {
-            const course = MOCK_COURSES.find((item) => item.id === progressInfo.courseId);
-            if (!course) {
-              return null;
-            }
-
-            return {
-              ...course,
-              progress: progressInfo.progress,
-              learningStatus: progressInfo.status,
-              isEnrolled: progressInfo.status !== 'wishlist',
-            };
-          })
-          .filter(Boolean) as Course[];
-        setLearningCourses(fallbackCourses);
+        setLearningCourses([]);
       }
     };
 
@@ -68,7 +73,7 @@ export const MyLearnings = () => {
             course,
             progressInfo: {
               courseId: course.id,
-              progress: course.progress ?? 0,
+              progress: computeCourseProgress(course),
               status,
             },
           };
@@ -128,27 +133,6 @@ export const MyLearnings = () => {
           <p className="text-slate-500">
             You&apos;re making great progress. You have {inProgressCount} course{inProgressCount === 1 ? '' : 's'} currently in progress.
           </p>
-        </div>
-        <div className="flex items-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center">
-              <Flame className="w-5 h-5 text-orange-600" />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Streak</p>
-              <p className="text-sm font-bold text-slate-900">5 Days</p>
-            </div>
-          </div>
-          <div className="w-px h-8 bg-slate-200" />
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
-              <Trophy className="w-5 h-5 text-indigo-600" />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Points</p>
-              <p className="text-sm font-bold text-slate-900">1,250</p>
-            </div>
-          </div>
         </div>
       </header>
 

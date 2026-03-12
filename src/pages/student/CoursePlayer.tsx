@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, ChevronLeft, CheckCircle2, Circle, Menu, X, Share2, MoreVertical, FileText, HelpCircle, Video, Star, ExternalLink, Download } from 'lucide-react';
-import { MOCK_COURSES } from '../../mockData';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../utils';
 import { UserAvatar } from '../../components/UserAvatar';
-import type { Course, Lecture, LectureQuiz, QuizAttempt } from '../../types';
+import type { Course, Lecture, LectureQuiz, QuizAttempt, Section } from '../../types';
 import { completeLectureProgress, fetchLectureQuiz, fetchPublicCourse, submitCourseRating, submitLectureQuizAttempt } from '../../lib/courseApi';
 import { useAuth } from '../../auth/AuthContext';
 
@@ -121,16 +120,75 @@ const parseResourceFiles = (rawContent?: string): ResourceFileItem[] => {
   }
 };
 
-const fallbackCourse = (courseId?: string) => MOCK_COURSES.find((course) => course.id === courseId) ?? MOCK_COURSES[0];
+const SECTION_TITLE_DELIMITER = '::';
+
+const parseSectionTitle = (title: string) => {
+  const parts = title.split(SECTION_TITLE_DELIMITER).map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    return {
+      sectionTitle: parts[0],
+      subsectionTitle: parts.slice(1).join(` ${SECTION_TITLE_DELIMITER} `).trim(),
+    };
+  }
+
+  return {
+    sectionTitle: title.trim(),
+    subsectionTitle: title.trim(),
+  };
+};
+
+const normalizeTitle = (value: string) => value.trim().toLowerCase();
+
+const getSectionGroupTitle = (title: string) => {
+  const parsed = parseSectionTitle(title);
+  return parsed.sectionTitle || title.trim();
+};
+
+const filterSectionsBySubsection = (sections: Section[], subsectionId: string | null) => {
+  if (!subsectionId) {
+    return sections;
+  }
+  const filtered = sections.filter((section) => section.id === subsectionId);
+  return filtered.length > 0 ? filtered : sections;
+};
+
+const filterSectionsByGroup = (sections: Section[], filter: string | null) => {
+  if (!filter) {
+    return sections;
+  }
+  const normalized = normalizeTitle(filter);
+  const filtered = sections.filter((section) =>
+    normalizeTitle(getSectionGroupTitle(section.title)) === normalized,
+  );
+  return filtered.length > 0 ? filtered : sections;
+};
+
+const findLectureById = (sections: Section[], lectureId?: string) => {
+  if (!lectureId) {
+    return null;
+  }
+
+  for (const section of sections) {
+    const lecture = section.lectures.find((candidate) => candidate.id === lectureId);
+    if (lecture) {
+      return { lecture, sectionId: section.id };
+    }
+  }
+
+  return null;
+};
 
 export const CoursePlayer = () => {
-  const { id } = useParams();
+  const { id, lectureId } = useParams();
+  const [searchParams] = useSearchParams();
+  const sectionFilter = (searchParams.get('section') ?? '').trim() || null;
+  const subsectionFilter = (searchParams.get('subsection') ?? '').trim() || null;
   const { user } = useAuth();
   const mainContentRef = useRef<HTMLElement | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [course, setCourse] = useState<Course>(() => fallbackCourse(id));
+  const [course, setCourse] = useState<Course | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeLecture, setActiveLecture] = useState<Lecture | undefined>(fallbackCourse(id).sections[0]?.lectures[0]);
+  const [activeLecture, setActiveLecture] = useState<Lecture | undefined>(undefined);
   const [activeLectureQuiz, setActiveLectureQuiz] = useState<LectureQuiz | null>(null);
   const [quizAttempt, setQuizAttempt] = useState<QuizAttempt | null>(null);
   const [quizReviewAttempt, setQuizReviewAttempt] = useState<QuizAttempt | null>(null);
@@ -142,18 +200,23 @@ export const CoursePlayer = () => {
   const [isSubmittingQuiz, setIsSubmittingQuiz] = useState(false);
   const [quizError, setQuizError] = useState<string | null>(null);
   const [quizMessage, setQuizMessage] = useState<string | null>(null);
-  const [selectedRating, setSelectedRating] = useState<number>(course.studentRating ?? 0);
+  const [selectedRating, setSelectedRating] = useState<number>(0);
   const [isSubmittingRating, setIsSubmittingRating] = useState(false);
   const [ratingError, setRatingError] = useState<string | null>(null);
   const [ratingMessage, setRatingMessage] = useState<string | null>(null);
-  const [expandedSections, setExpandedSections] = useState<string[]>(
-    course.sections[0] ? [course.sections[0].id] : [],
-  );
+  const [expandedSections, setExpandedSections] = useState<string[]>([]);
+
+  const courseSections = course?.sections ?? [];
+
+  const visibleSections = useMemo(() => {
+    const baseSections = filterSectionsBySubsection(courseSections, subsectionFilter);
+    return subsectionFilter ? baseSections : filterSectionsByGroup(baseSections, sectionFilter);
+  }, [courseSections, sectionFilter, subsectionFilter]);
 
   useEffect(() => {
     if (!id) {
-      setCourse(fallbackCourse());
-      setActiveLecture(fallbackCourse().sections[0]?.lectures[0]);
+      setCourse(null);
+      setActiveLecture(undefined);
       setIsLoading(false);
       return;
     }
@@ -165,18 +228,20 @@ export const CoursePlayer = () => {
           user?.role === 'Student' ? user.id : undefined,
         );
         setCourse(fetchedCourse);
-        setActiveLecture(fetchedCourse.sections[0]?.lectures[0]);
+        const baseSections = filterSectionsBySubsection(fetchedCourse.sections, subsectionFilter);
+        const filteredSections = subsectionFilter ? baseSections : filterSectionsByGroup(baseSections, sectionFilter);
+        const foundLecture = findLectureById(filteredSections, lectureId);
+        setActiveLecture(foundLecture?.lecture ?? filteredSections[0]?.lectures[0]);
       } catch {
-        const fallback = fallbackCourse(id);
-        setCourse(fallback);
-        setActiveLecture(fallback.sections[0]?.lectures[0]);
+        setCourse(null);
+        setActiveLecture(undefined);
       } finally {
         setIsLoading(false);
       }
     };
 
     loadCourse();
-  }, [id, user]);
+  }, [id, lectureId, sectionFilter, subsectionFilter, user]);
 
   useEffect(() => {
     if (!id || !activeLecture || activeLecture.type !== 'Quiz' || user?.role !== 'Student' || !user.id) {
@@ -252,7 +317,7 @@ export const CoursePlayer = () => {
       activeLecture.type === 'Quiz' ||
       user?.role !== 'Student' ||
       !user.id ||
-      !course.isEnrolled
+      !course?.isEnrolled
     ) {
       return;
     }
@@ -278,7 +343,7 @@ export const CoursePlayer = () => {
     return () => {
       isCancelled = true;
     };
-  }, [activeLecture?.id, activeLecture?.type, course.isEnrolled, id, isLoading, user?.id, user?.role]);
+  }, [activeLecture?.id, activeLecture?.type, course?.isEnrolled, id, isLoading, user?.id, user?.role]);
 
   useEffect(() => {
     if (!activeLecture?.id) {
@@ -289,17 +354,30 @@ export const CoursePlayer = () => {
   }, [activeLecture?.id]);
 
   useEffect(() => {
-    setSelectedRating(course.studentRating ?? 0);
-  }, [course.id, course.studentRating]);
+    setSelectedRating(course?.studentRating ?? 0);
+  }, [course?.id, course?.studentRating]);
 
   useEffect(() => {
-    if (course.sections.length === 0) {
+    if (visibleSections.length === 0) {
       setExpandedSections([]);
       return;
     }
 
-    setExpandedSections([course.sections[0].id]);
-  }, [course.id, course.sections]);
+    const matched = findLectureById(visibleSections, lectureId);
+    const initialSectionId = matched?.sectionId ?? visibleSections[0].id;
+    setExpandedSections([initialSectionId]);
+  }, [course?.id, lectureId, visibleSections]);
+
+  useEffect(() => {
+    if (!lectureId || visibleSections.length === 0) {
+      return;
+    }
+
+    const matched = findLectureById(visibleSections, lectureId);
+    if (matched && matched.lecture.id !== activeLecture?.id) {
+      setActiveLecture(matched.lecture);
+    }
+  }, [visibleSections, lectureId]);
 
   const activeVideoUrl = activeLecture?.videoUrl?.trim() ?? '';
   const isActiveLectureQuiz = activeLecture?.type === 'Quiz';
@@ -308,7 +386,7 @@ export const CoursePlayer = () => {
   const hasDirectVideoUrl = Boolean(activeVideoUrl) && !youtubeEmbedUrl;
   const courseResourceFiles = useMemo(
     () =>
-      course.sections.flatMap((section) =>
+      visibleSections.flatMap((section) =>
         section.lectures.flatMap((lecture) =>
           parseResourceFiles(lecture.content).map((resourceFile, index) => ({
             ...resourceFile,
@@ -318,22 +396,40 @@ export const CoursePlayer = () => {
           })),
         ),
       ),
-    [course.sections],
+    [visibleSections],
   );
-  const completedLectureIdSet = new Set(course.completedLectureIds ?? []);
-  const totalLectureCount = course.sections.reduce((count, section) => count + section.lectures.length, 0);
+  const visibleLectures = useMemo(
+    () => visibleSections.flatMap((section) => section.lectures),
+    [visibleSections],
+  );
+  const completedLectureIdSet = new Set(course?.completedLectureIds ?? []);
+  const progressValue = course?.progress;
+  const normalizedProgress = typeof progressValue === 'number'
+    ? Math.max(0, Math.min(100, Math.round(progressValue)))
+    : null;
+  const lastVisibleLectureId = visibleLectures.length > 0 ? visibleLectures[visibleLectures.length - 1].id : null;
+  const isLastVisibleLecture = Boolean(activeLecture?.id && lastVisibleLectureId === activeLecture.id);
+  const completedVisibleCount = visibleLectures.filter((lecture) => completedLectureIdSet.has(lecture.id)).length;
+  const shouldShowFinishButton = isLastVisibleLecture;
+  const totalLectureCount = courseSections.reduce((count, section) => count + section.lectures.length, 0);
   const completedLectureCount = Array.from(completedLectureIdSet).filter((lectureId) =>
-    course.sections.some((section) => section.lectures.some((lecture) => lecture.id === lectureId)),
+    courseSections.some((section) => section.lectures.some((lecture) => lecture.id === lectureId)),
   ).length;
+  const computedProgressPercent = totalLectureCount > 0
+    ? Math.round((completedLectureCount / totalLectureCount) * 100)
+    : normalizedProgress ?? 0;
+  const displayedProgressPercent = completedLectureIdSet.size === 0 && normalizedProgress !== null
+    ? normalizedProgress
+    : computedProgressPercent;
   const answeredQuizCount = Object.keys(quizSelections).length;
   const canStartRetake = Boolean(quizAttempt) && !isRetakingQuiz;
   const quizAttempts = activeLectureQuiz?.attempts ?? (quizAttempt ? [quizAttempt] : []);
   const isCourseCompleted =
-    course.learningStatus === 'completed'
-    || (course.progress ?? 0) >= 100
+    course?.learningStatus === 'completed'
     || (totalLectureCount > 0 && completedLectureCount >= totalLectureCount);
-  const hasSubmittedRating = typeof course.studentRating === 'number' && course.studentRating >= 1 && course.studentRating <= 5;
-  const displayedRating = hasSubmittedRating ? (course.studentRating ?? 0) : selectedRating;
+  const studentRatingValue = course?.studentRating;
+  const hasSubmittedRating = typeof studentRatingValue === 'number' && studentRatingValue >= 1 && studentRatingValue <= 5;
+  const displayedRating = hasSubmittedRating ? (studentRatingValue ?? 0) : selectedRating;
   const answeredQuizItems = (activeLectureQuiz?.questions ?? [])
     .map((question, questionIndex) => {
       const selectedAnswerId = quizSelections[question.id];
@@ -501,7 +597,24 @@ export const CoursePlayer = () => {
     );
   }
 
-  if (user?.role === 'Student' && !course.isEnrolled) {
+  if (!course) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-900 px-4 text-white">
+        <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
+          <h1 className="mb-3 text-2xl font-bold">Course not found</h1>
+          <p className="text-slate-300">This course is unavailable right now.</p>
+          <Link
+            to="/browse"
+            className="mt-6 inline-flex rounded-xl bg-indigo-600 px-5 py-2.5 font-semibold text-white transition-colors hover:bg-indigo-700"
+          >
+            Back to Browse
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (user?.role === 'Student' && course && !course.isEnrolled) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900 px-4 text-white">
         <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
@@ -526,17 +639,17 @@ export const CoursePlayer = () => {
     <div className="flex h-screen flex-col overflow-hidden bg-slate-900 text-white">
       <header className="z-20 flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-slate-900 px-4">
         <div className="flex items-center gap-4">
-          <Link to="/my-learnings" className="rounded-lg p-2 transition-colors hover:bg-white/10">
+          <Link to={`/course/${course.id}/learn`} className="rounded-lg p-2 transition-colors hover:bg-white/10">
             <ChevronLeft className="h-5 w-5" />
           </Link>
           <div className="hidden sm:block">
             <h1 className="max-w-xs truncate text-sm font-bold">{course.title}</h1>
             <div className="mt-0.5 flex items-center gap-2">
               <div className="h-1 w-32 overflow-hidden rounded-full bg-white/10">
-                <div className="h-full bg-indigo-500" style={{ width: `${course.progress ?? 0}%` }} />
+                <div className="h-full bg-indigo-500" style={{ width: `${displayedProgressPercent}%` }} />
               </div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                {(course.progress ?? 0)}% Complete
+                {displayedProgressPercent}% Complete
               </span>
             </div>
           </div>
@@ -593,16 +706,8 @@ export const CoursePlayer = () => {
             </div>
           ) : null}
 
-          <div className="mx-auto w-full max-w-4xl space-y-8 p-8">
-            {!isActiveLectureResource ? (
-              <div className="flex items-center gap-4 border-b border-white/10 pb-4">
-                <button className="border-b-2 border-indigo-400 pb-4 text-sm font-bold text-indigo-400">Overview</button>
-                <button className="pb-4 text-sm font-bold text-slate-400 transition-colors hover:text-white">Resources</button>
-                <button className="pb-4 text-sm font-bold text-slate-400 transition-colors hover:text-white">Q&amp;A</button>
-                <button className="pb-4 text-sm font-bold text-slate-400 transition-colors hover:text-white">Notes</button>
-                <button className="pb-4 text-sm font-bold text-slate-400 transition-colors hover:text-white">Reviews</button>
-              </div>
-            ) : null}
+          {isActiveLectureQuiz || isActiveLectureResource ? (
+            <div className="mx-auto w-full max-w-4xl space-y-8 p-8">
 
             {isCourseCompleted && user?.role === 'Student' ? (
               <motion.div
@@ -1059,8 +1164,32 @@ export const CoursePlayer = () => {
                 </>
               )}
 
+              {shouldShowFinishButton ? (
+                <div className="flex justify-end">
+                  <Link
+                    to={`/course/${course.id}/learn`}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-600"
+                  >
+                    Back to Course
+                  </Link>
+                </div>
+              ) : null}
             </div>
           </div>
+          ) : null}
+
+          {!isActiveLectureQuiz && !isActiveLectureResource && shouldShowFinishButton ? (
+            <div className="mx-auto w-full max-w-4xl px-8 pb-10 pt-6">
+              <div className="flex justify-end">
+                <Link
+                  to={`/course/${course.id}/learn`}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-600"
+                >
+                  Back to Course
+                </Link>
+              </div>
+            </div>
+          ) : null}
         </main>
 
         <AnimatePresence>
@@ -1075,7 +1204,12 @@ export const CoursePlayer = () => {
                 <h3 className="font-bold">Course Content</h3>
               </div>
               <div className="flex-1 overflow-y-auto">
-                {course.sections.map((section, sectionIndex) => (
+                {visibleSections.map((section, sectionIndex) => {
+                  const parsedTitle = parseSectionTitle(section.title);
+                  const displayTitle = parsedTitle.subsectionTitle || section.title;
+                  const sectionLabel = sectionFilter ? 'Subsection' : 'Section';
+
+                  return (
                   <div key={section.id} className="border-b border-white/5">
                     <button
                       type="button"
@@ -1084,7 +1218,7 @@ export const CoursePlayer = () => {
                     >
                       <div>
                         <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                          Section {sectionIndex + 1}: {section.title}
+                          {sectionLabel} {sectionIndex + 1}: {displayTitle}
                         </h4>
                         <p className="mt-1 text-[10px] text-slate-500">
                           {section.lectures.length} Lecture{section.lectures.length === 1 ? '' : 's'}
@@ -1140,13 +1274,16 @@ export const CoursePlayer = () => {
                       </div>
                     ) : null}
                   </div>
-                ))}
+                );
+                })}
               </div>
               <div className="border-t border-white/10 p-4">
-                <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 py-3 text-sm font-bold transition-all hover:bg-white/10">
-                  <HelpCircle className="h-4 w-4" />
-                  Get Support
-                </button>
+                <Link
+                  to={`/course/${course.id}/learn`}
+                  className="flex w-full items-center justify-center rounded-xl border border-emerald-400/30 bg-emerald-500/10 py-3 text-sm font-bold text-emerald-100 transition-all hover:bg-emerald-500/20"
+                >
+                  Back to Course
+                </Link>
               </div>
             </motion.aside>
           ) : null}

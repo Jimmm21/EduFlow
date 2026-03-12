@@ -5,7 +5,7 @@ import { cn } from '../utils';
 import { useAuth } from '../auth/AuthContext';
 
 const navItems = [
-  { icon: Home, label: 'Home', path: '/' },
+  { icon: Home, label: 'Home', path: '/home' },
   { icon: GraduationCap, label: 'My Learning', path: '/my-learnings' },
   { icon: Compass, label: 'Browse', path: '/browse' },
   { icon: UserCircle2, label: 'Profile', path: '/profile' },
@@ -22,8 +22,8 @@ export const StudentSidebar = () => {
   };
 
   const isItemActive = (path: string) => {
-    if (path === '/') {
-      return location.pathname === '/';
+    if (path === '/home') {
+      return location.pathname === '/home';
     }
 
     if (path === '/browse') {

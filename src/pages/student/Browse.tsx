@@ -1,31 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Search, Filter, Star, ChevronDown, Heart } from 'lucide-react';
-import { MOCK_COURSES, MOCK_STUDENT_COURSE_PROGRESS } from '../../mockData';
 import { CATEGORIES, LEVELS, cn } from '../../utils';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import type { Course } from '../../types';
 import { fetchPublicCourses } from '../../lib/courseApi';
 
-const fallbackCourses = MOCK_COURSES.filter(
-  (course) => course.status === 'Published' && course.visibility === 'Public',
-);
-
 export const BrowseCourses = () => {
   const [selectedCategory, setSelectedCategory] = useState('All Categories');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLevels, setSelectedLevels] = useState<Set<string>>(() => new Set());
   const [selectedRatings, setSelectedRatings] = useState<Set<number>>(() => new Set());
-  const [courses, setCourses] = useState<Course[]>(fallbackCourses);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [wishlistIds, setWishlistIds] = useState<Set<string>>(
-    () =>
-      new Set(
-        MOCK_STUDENT_COURSE_PROGRESS
-          .filter((item) => item.status === 'wishlist')
-          .map((item) => item.courseId),
-      ),
-  );
+  const [wishlistIds, setWishlistIds] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     const loadCourses = async () => {
@@ -33,7 +21,7 @@ export const BrowseCourses = () => {
         const publicCourses = await fetchPublicCourses();
         setCourses(publicCourses);
       } catch {
-        setCourses(fallbackCourses);
+        setCourses([]);
       } finally {
         setIsLoading(false);
       }

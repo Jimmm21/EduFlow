@@ -1,15 +1,33 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Play, Star, Clock, Users, ChevronRight, ArrowRight } from 'lucide-react';
-import { MOCK_COURSES } from '../../mockData';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { fetchPublicCourses } from '../../lib/courseApi';
+import { buildCourseStats, formatStatCount } from '../../lib/courseStats';
 import type { Course } from '../../types';
 
 export const StudentHome = () => {
-  const [recommendedCourses, setRecommendedCourses] = useState<Course[]>(
-    MOCK_COURSES.filter((course) => course.status === 'Published' && course.visibility === 'Public'),
+  const [recommendedCourses, setRecommendedCourses] = useState<Course[]>([]);
+
+  const publishedCourses = useMemo(
+    () => recommendedCourses.filter((course) => course.status === 'Published' && course.visibility === 'Public'),
+    [recommendedCourses],
   );
+
+  const latestCourse = useMemo(() => {
+    if (publishedCourses.length === 0) {
+      return null;
+    }
+
+    const scoreDate = (value: string) => {
+      const parsed = Date.parse(value);
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+
+    return [...publishedCourses].sort((a, b) => scoreDate(b.lastUpdated) - scoreDate(a.lastUpdated))[0];
+  }, [publishedCourses]);
+
+  const stats = useMemo(() => buildCourseStats(publishedCourses), [publishedCourses]);
 
   useEffect(() => {
     const loadCourses = async () => {
@@ -17,22 +35,27 @@ export const StudentHome = () => {
         const courses = await fetchPublicCourses();
         setRecommendedCourses(courses);
       } catch {
-        setRecommendedCourses(
-          MOCK_COURSES.filter((course) => course.status === 'Published' && course.visibility === 'Public'),
-        );
+        setRecommendedCourses([]);
       }
     };
 
     loadCourses();
   }, []);
 
+  const heroCourse = latestCourse ?? publishedCourses[0] ?? null;
+  const heroTitle = heroCourse?.title ?? 'Empowering the next generation of thinkers.';
+  const heroSubtitle = heroCourse?.subtitle || heroCourse?.description || '"Education is the most powerful weapon which you can use to change the world."';
+  const heroImage = heroCourse?.image ?? 'https://picsum.photos/seed/learning/1920/1080';
+  const heroLink = heroCourse ? `/course/${heroCourse.id}` : '/browse';
+  const heroCategory = heroCourse?.category ?? 'New Release';
+
   return (
     <div className="space-y-16">
       <section className="relative h-[500px] rounded-3xl overflow-hidden bg-slate-900 flex items-center px-12">
         <div className="absolute inset-0 opacity-40">
           <img 
-            src="https://picsum.photos/seed/learning/1920/1080" 
-            alt="Hero" 
+            src={heroImage}
+            alt={heroCourse?.title ?? 'Hero'} 
             className="w-full h-full object-cover"
             referrerPolicy="no-referrer"
           />
@@ -45,7 +68,7 @@ export const StudentHome = () => {
             animate={{ opacity: 1, y: 0 }}
             className="inline-block px-4 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-full uppercase tracking-widest"
           >
-            New Release
+            {heroCategory}
           </motion.span>
           <motion.h1 
             initial={{ opacity: 0, y: 20 }}
@@ -53,7 +76,7 @@ export const StudentHome = () => {
             transition={{ delay: 0.1 }}
             className="text-5xl font-bold text-white leading-tight"
           >
-            Empowering the next generation of thinkers.
+            {heroTitle}
           </motion.h1>
           <motion.p 
             initial={{ opacity: 0, y: 20 }}
@@ -61,7 +84,7 @@ export const StudentHome = () => {
             transition={{ delay: 0.2 }}
             className="text-lg text-slate-300 italic"
           >
-            "Education is the most powerful weapon which you can use to change the world."
+            {heroSubtitle}
           </motion.p>
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
@@ -69,15 +92,29 @@ export const StudentHome = () => {
             transition={{ delay: 0.3 }}
             className="flex items-center gap-4"
           >
-            <Link to="/browse" className="bg-white text-slate-900 px-8 py-3 rounded-xl font-bold hover:bg-indigo-50 transition-all flex items-center gap-2">
-              Explore Courses <ArrowRight className="w-4 h-4" />
+            <Link to={heroLink} className="bg-white text-slate-900 px-8 py-3 rounded-xl font-bold hover:bg-indigo-50 transition-all flex items-center gap-2">
+              View Course <ArrowRight className="w-4 h-4" />
             </Link>
-            <button className="text-white font-bold hover:text-indigo-400 transition-colors flex items-center gap-2">
-              <div className="w-10 h-10 rounded-full border border-white/30 flex items-center justify-center">
-                <Play className="w-4 h-4 fill-current" />
-              </div>
-              Watch Demo
-            </button>
+            {heroCourse?.promoVideo ? (
+              <a
+                href={heroCourse.promoVideo}
+                target="_blank"
+                rel="noreferrer"
+                className="text-white font-bold hover:text-indigo-400 transition-colors flex items-center gap-2"
+              >
+                <div className="w-10 h-10 rounded-full border border-white/30 flex items-center justify-center">
+                  <Play className="w-4 h-4 fill-current" />
+                </div>
+                Watch Demo
+              </a>
+            ) : (
+              <Link to="/browse" className="text-white font-bold hover:text-indigo-400 transition-colors flex items-center gap-2">
+                <div className="w-10 h-10 rounded-full border border-white/30 flex items-center justify-center">
+                  <Play className="w-4 h-4 fill-current" />
+                </div>
+                Explore Courses
+              </Link>
+            )}
           </motion.div>
         </div>
       </section>
@@ -134,19 +171,19 @@ export const StudentHome = () => {
 
       <section className="bg-slate-50 rounded-3xl p-12 grid grid-cols-1 md:grid-cols-4 gap-8">
         <div className="space-y-2">
-          <h4 className="text-3xl font-bold text-slate-900">12K+</h4>
+          <h4 className="text-3xl font-bold text-slate-900">{formatStatCount(stats.activeStudents)}</h4>
           <p className="text-sm text-slate-500 font-medium">Active Students</p>
         </div>
         <div className="space-y-2">
-          <h4 className="text-3xl font-bold text-slate-900">500+</h4>
+          <h4 className="text-3xl font-bold text-slate-900">{formatStatCount(stats.expertInstructors)}</h4>
           <p className="text-sm text-slate-500 font-medium">Expert Instructors</p>
         </div>
         <div className="space-y-2">
-          <h4 className="text-3xl font-bold text-slate-900">1.2K+</h4>
+          <h4 className="text-3xl font-bold text-slate-900">{formatStatCount(stats.totalCourses)}</h4>
           <p className="text-sm text-slate-500 font-medium">Total Courses</p>
         </div>
         <div className="space-y-2">
-          <h4 className="text-3xl font-bold text-slate-900">4.9</h4>
+          <h4 className="text-3xl font-bold text-slate-900">{stats.avgRating.toFixed(1)}</h4>
           <p className="text-sm text-slate-500 font-medium">Average Rating</p>
         </div>
       </section>

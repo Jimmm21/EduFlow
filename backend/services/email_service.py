@@ -6,6 +6,7 @@ import urllib.request
 from email.message import EmailMessage
 
 from ..config import (
+  APP_URL,
   GMAIL_CLIENT_ID,
   GMAIL_CLIENT_SECRET,
   GMAIL_REFRESH_TOKEN,
@@ -23,6 +24,8 @@ def _missing_gmail_config_fields() -> list[str]:
     missing.append("GMAIL_CLIENT_SECRET")
   if not GMAIL_REFRESH_TOKEN:
     missing.append("GMAIL_REFRESH_TOKEN")
+  if not GMAIL_SENDER_EMAIL:
+    missing.append("GMAIL_SENDER_EMAIL")
   return missing
 
 
@@ -94,13 +97,19 @@ def _build_welcome_email_body(course_title: str, welcome_message: str) -> str:
   custom_message = welcome_message.strip()
   if custom_message:
     # Use the exact automated message configured on the course.
-    return custom_message
+    body = custom_message
+  else:
+    normalized_course_title = course_title.strip() or "your course"
+    body = (
+      f"Your enrollment for \"{normalized_course_title}\" has been approved.\n\n"
+      "You can now start learning from your dashboard."
+    )
 
-  normalized_course_title = course_title.strip() or "your course"
-  return (
-    f"Your enrollment for \"{normalized_course_title}\" has been approved.\n\n"
-    "You can now start learning from your dashboard."
-  )
+  app_url = APP_URL.strip()
+  if app_url and app_url not in body:
+    body = f"{body}\n\nOpen your dashboard: {app_url}"
+
+  return body
 
 
 def _build_completion_email_body(course_title: str, congratulations_message: str) -> str:
@@ -113,6 +122,19 @@ def _build_completion_email_body(course_title: str, congratulations_message: str
   return (
     f"Congratulations on completing \"{normalized_course_title}\".\n\n"
     "Great work finishing all sections."
+  )
+
+
+def _build_reminder_email_body(course_title: str, reminder_message: str) -> str:
+  custom_message = reminder_message.strip()
+  if custom_message:
+    # Use the exact automated message configured on the course.
+    return custom_message
+
+  normalized_course_title = course_title.strip() or "your course"
+  return (
+    f"Quick reminder for \"{normalized_course_title}\": steady progress beats long gaps.\n\n"
+    "Complete your next lesson, then write one short takeaway so it sticks."
   )
 
 
@@ -131,9 +153,7 @@ def _send_course_email(
     return False, token_error or "Unable to get Gmail access token."
 
   message = EmailMessage()
-  # If sender email is not set, Gmail API will use the authenticated account.
-  if GMAIL_SENDER_EMAIL:
-    message["From"] = f"{GMAIL_SENDER_NAME} <{GMAIL_SENDER_EMAIL}>"
+  message["From"] = f"{GMAIL_SENDER_NAME} <{GMAIL_SENDER_EMAIL}>"
   message["To"] = recipient
   message["Subject"] = subject
   message.set_content(body)
@@ -184,4 +204,17 @@ def send_course_completion_email(
     student_email=student_email,
     subject=f"Course Completed: {course_title.strip() or 'Your Course'}",
     body=_build_completion_email_body(course_title, congratulations_message),
+  )
+
+
+def send_course_reminder_email(
+  *,
+  student_email: str,
+  course_title: str,
+  reminder_message: str,
+) -> tuple[bool, str | None]:
+  return _send_course_email(
+    student_email=student_email,
+    subject=f"Course Reminder: {course_title.strip() or 'Your Course'}",
+    body=_build_reminder_email_body(course_title, reminder_message),
   )

@@ -1,18 +1,6 @@
-import type { Course, Lecture, Section } from '../types';
-import { MOCK_COURSES } from '../mockData';
+import type { Lecture, Section } from '../types';
 
 const STORAGE_PREFIX = 'eduflow.course-draft.sections';
-
-const createDefaultSections = (): Section[] => [
-  {
-    id: 's1',
-    title: 'Introduction to the Course',
-    lectures: [
-      { id: 'l1', title: 'Welcome and Course Overview', type: 'Video', duration: '05:40' },
-      { id: 'l2', title: 'Resources and Materials', type: 'Article' },
-    ],
-  },
-];
 
 const canUseStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 
@@ -23,16 +11,7 @@ const storageKeyForCourse = (courseId: string) => `${STORAGE_PREFIX}.${courseId}
 const isNewCourseKey = (courseId: string) => courseId === 'new' || courseId.startsWith('new:');
 
 const fallbackSectionsForCourse = (courseId: string): Section[] => {
-  if (isNewCourseKey(courseId)) {
-    return [];
-  }
-
-  const course = MOCK_COURSES.find((item) => item.id === courseId);
-  if (!course || !course.sections || course.sections.length === 0) {
-    return createDefaultSections();
-  }
-
-  return course.sections;
+  return isNewCourseKey(courseId) ? [] : [];
 };
 
 export const getCourseSectionsDraft = (courseId: string): Section[] => {

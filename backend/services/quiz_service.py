@@ -397,9 +397,9 @@ def update_student_course_progress_from_completed_lecture(
   completed_lectures_row = cursor.fetchone() or {}
   completed_lectures = int(completed_lectures_row.get("completed_lectures") or 0)
 
-  progress = int(round((completed_sections / total_sections) * 100)) if total_sections > 0 else 0
+  progress = int(round((completed_lectures / total_lectures) * 100)) if total_lectures > 0 else 0
   progress = max(0, min(100, progress))
-  learning_status = "completed" if total_sections > 0 and completed_sections >= total_sections else "in-progress"
+  learning_status = "completed" if total_lectures > 0 and completed_lectures >= total_lectures else "in-progress"
 
   cursor.execute(
     """

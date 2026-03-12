@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams, Link } from 'react-router-dom';
-import { MOCK_COURSES } from '../../mockData';
 import { Star, Globe, Users, Calendar, Check, ChevronDown, PlayCircle, ArrowLeft, Video, FileText, HelpCircle, Download } from 'lucide-react';
 import type { Course, Section } from '../../types';
 import { useAuth } from '../../auth/AuthContext';
@@ -14,12 +13,6 @@ type PreviewLocationState = {
 type DescriptionBlock =
   | { type: 'paragraph'; text: string }
   | { type: 'list'; items: string[] };
-
-const FALLBACK_LEARNING_OUTCOMES = [
-  'Build practical projects that reinforce the main concepts in this course',
-  'Apply core ideas in real-world tasks and implementation scenarios',
-  'Strengthen confidence through guided exercises and structured lessons',
-];
 
 const isRenderableAssetUrl = (value: string | undefined) => {
   if (!value) {
@@ -158,14 +151,9 @@ export const CourseDetails = () => {
         setCourse(fetchedCourse);
         return;
       } catch {
-        // Fall through to mock fallback below.
+        // Keep course unset on error.
       }
-
-      setCourse(
-        MOCK_COURSES.find(
-          (item) => item.id === id && item.status === 'Published' && item.visibility === 'Public',
-        ) ?? null,
-      );
+      setCourse(null);
     };
 
     fetchCourse().finally(() => setIsLoading(false));
@@ -185,7 +173,7 @@ export const CourseDetails = () => {
     [course],
   );
   const learningOutcomes = useMemo(
-    () => (course?.targetStudents.length ? course.targetStudents : FALLBACK_LEARNING_OUTCOMES),
+    () => (course?.targetStudents.length ? course.targetStudents : []),
     [course],
   );
   const descriptionBlocks = useMemo(
@@ -433,12 +421,16 @@ export const CourseDetails = () => {
           <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-8">
             <h2 className="mb-6 text-2xl font-bold text-slate-900">What you'll learn</h2>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {learningOutcomes.map((item) => (
-                <div key={item} className="flex items-start gap-3 text-sm text-slate-600">
-                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-                  <span>{item}</span>
-                </div>
-              ))}
+              {learningOutcomes.length === 0 ? (
+                <p className="text-sm text-slate-500">Learning outcomes will appear here once they are added.</p>
+              ) : (
+                learningOutcomes.map((item) => (
+                  <div key={item} className="flex items-start gap-3 text-sm text-slate-600">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                    <span>{item}</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 

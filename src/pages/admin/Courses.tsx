@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Plus, Users, Star, PencilLine, Clock4, Settings, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { MOCK_COURSES } from '../../mockData';
 import { cn } from '../../utils';
 import type { Course } from '../../types';
 import { API_BASE_URL as COURSE_API_BASE_URL } from '../../lib/apiBase';
@@ -26,7 +25,7 @@ const extractApiMessage = (payload: unknown): string | undefined => {
 
 export const AdminCourses = () => {
   const location = useLocation();
-  const [courses, setCourses] = useState<Course[]>(MOCK_COURSES);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<Course | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -63,7 +62,7 @@ export const AdminCourses = () => {
 
         setCourses(payloadCourses as Course[]);
       } catch {
-        // Keep mock fallback when backend is unavailable.
+        setCourses([]);
       } finally {
         setIsLoading(false);
       }

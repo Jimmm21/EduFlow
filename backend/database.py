@@ -51,11 +51,13 @@ def ensure_user_table_exists() -> None:
           """
           INSERT INTO app_users (id, name, email, role, password_hash)
           VALUES (%s, %s, %s, %s, %s)
-          ON CONFLICT (email) DO UPDATE
+          ON CONFLICT (id) DO UPDATE
           SET
             password_hash = COALESCE(app_users.password_hash, EXCLUDED.password_hash),
             name = COALESCE(app_users.name, EXCLUDED.name),
-            role = COALESCE(app_users.role, EXCLUDED.role);
+            email = COALESCE(app_users.email, EXCLUDED.email),
+            role = COALESCE(app_users.role, EXCLUDED.role),
+            updated_at = NOW();
           """,
           (
             seed_user["id"],

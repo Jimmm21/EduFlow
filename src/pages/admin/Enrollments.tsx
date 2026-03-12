@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Filter, XCircle } from 'lucide-react';
-import { MOCK_COURSES, MOCK_ENROLLMENT_REQUESTS } from '../../mockData';
 import type { Course, EnrollmentRequest, EnrollmentRequestStatus } from '../../types';
 import { cn } from '../../utils';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -18,8 +17,8 @@ const statusStyles: Record<EnrollmentRequestStatus, string> = {
 
 export const AdminEnrollments = () => {
   const [selectedCourseId, setSelectedCourseId] = useState<string>('all');
-  const [courses, setCourses] = useState<Course[]>(MOCK_COURSES);
-  const [requests, setRequests] = useState<EnrollmentRequest[]>(MOCK_ENROLLMENT_REQUESTS);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [requests, setRequests] = useState<EnrollmentRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [actionRequestId, setActionRequestId] = useState<string | null>(null);
   const [confirmationAction, setConfirmationAction] = useState<{
@@ -42,8 +41,8 @@ export const AdminEnrollments = () => {
         setCourses(adminCourses);
         setRequests(enrollmentRequests);
       } catch (loadError) {
-        setCourses(MOCK_COURSES);
-        setRequests(MOCK_ENROLLMENT_REQUESTS);
+        setCourses([]);
+        setRequests([]);
         setError(loadError instanceof Error ? loadError.message : 'Unable to load enrollment requests from backend.');
       } finally {
         setIsLoading(false);

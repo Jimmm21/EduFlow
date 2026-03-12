@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import type { User } from '../types';
 import { API_BASE_URL } from '../lib/apiBase';
+import { deleteAdminUser, updateUserProfile } from '../lib/userApi';
 
 type UserRole = User['role'];
 
@@ -49,6 +50,11 @@ interface CreateAdminResult {
   message?: string;
 }
 
+interface DeleteAdminResult {
+  success: boolean;
+  message?: string;
+}
+
 interface UpdateProfileInput {
   name: string;
   email: string;
@@ -69,7 +75,8 @@ interface AuthContextValue {
   logout: () => void;
   register: (input: RegisterInput) => Promise<RegisterResult>;
   createAdminAccount: (input: CreateAdminInput) => Promise<CreateAdminResult>;
-  updateProfile: (input: UpdateProfileInput) => UpdateProfileResult;
+  deleteAdminAccount: (adminId: string) => Promise<DeleteAdminResult>;
+  updateProfile: (input: UpdateProfileInput) => Promise<UpdateProfileResult>;
 }
 
 const ACTIVE_USER_STORAGE_KEY = 'eduflow.auth.active-user';
@@ -342,7 +349,7 @@ const writeActiveUser = (user: User | null) => {
   window.localStorage.setItem(ACTIVE_USER_STORAGE_KEY, JSON.stringify(user));
 };
 
-export const defaultRouteForRole = (role: UserRole) => (role === 'Admin' ? '/admin' : '/');
+export const defaultRouteForRole = (role: UserRole) => (role === 'Admin' ? '/admin' : '/home');
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [profileOverrides, setProfileOverrides] = useState<UserProfileOverrides>(() => readProfileOverrides());
@@ -361,7 +368,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const filteredCustomCredentials = customCredentials.filter(
       (credential) => !seedEmails.has(normalizeEmail(credential.email)),
     );
-    return [...SEED_CREDENTIALS, ...filteredCustomCredentials].map((credential) =>
+    const hasCustomAdmin = filteredCustomCredentials.some((credential) => credential.role === 'Admin');
+    const seedCredentials = SEED_CREDENTIALS.filter(
+      (credential) => credential.role !== 'Admin' || !hasCustomAdmin,
+    );
+    return [...seedCredentials, ...filteredCustomCredentials].map((credential) =>
       applyProfileOverrideToCredential(credential, profileOverrides),
     );
   }, [customCredentials, profileOverrides]);
@@ -659,7 +670,60 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
   };
 
-  const updateProfile = (input: UpdateProfileInput): UpdateProfileResult => {
+  const deleteAdminAccount = async (adminId: string): Promise<DeleteAdminResult> => {
+    if (!user || user.role !== 'Admin') {
+      return {
+        success: false,
+        message: 'Only admins can delete admin accounts.',
+      };
+    }
+
+    if (user.id === adminId) {
+      return {
+        success: false,
+        message: 'You cannot delete your own admin account.',
+      };
+    }
+
+    if (adminId.startsWith('seed-')) {
+      return {
+        success: false,
+        message: 'Default admin accounts cannot be deleted.',
+      };
+    }
+
+    const apiResult = await deleteAdminUser(adminId);
+    if (!apiResult.success) {
+      return {
+        success: false,
+        message: apiResult.message ?? 'Unable to delete admin account.',
+      };
+    }
+
+    setCustomCredentials((previousCredentials) => {
+      const nextCredentials = previousCredentials.filter((credential) => credential.id !== adminId);
+      writeCustomCredentials(nextCredentials);
+      return nextCredentials;
+    });
+
+    setProfileOverrides((previousOverrides) => {
+      if (!previousOverrides[adminId]) {
+        return previousOverrides;
+      }
+
+      const nextOverrides = { ...previousOverrides };
+      delete nextOverrides[adminId];
+      writeProfileOverrides(nextOverrides);
+      return nextOverrides;
+    });
+
+    return {
+      success: true,
+      message: apiResult.message ?? 'Admin account deleted.',
+    };
+  };
+
+  const updateProfile = async (input: UpdateProfileInput): Promise<UpdateProfileResult> => {
     if (!user) {
       return {
         success: false,
@@ -689,12 +753,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       };
     }
 
-    const nextUser: User = {
-      ...user,
+    const apiResult = await updateUserProfile(user.id, {
       name: nextName,
       email: nextEmail,
-      avatar: nextAvatar,
-    };
+      avatar: nextAvatar ?? null,
+    });
+    if (!apiResult.success || !apiResult.data) {
+      return {
+        success: false,
+        message: apiResult.message ?? 'Unable to update profile.',
+      };
+    }
+
+    const nextUser = apiResult.data;
 
     setUser(nextUser);
     writeActiveUser(nextUser);
@@ -735,22 +806,24 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     return {
       success: true,
       user: nextUser,
+      message: apiResult.message,
     };
   };
 
   return (
     <AuthContext.Provider
-      value={{
-        user,
-        users,
-        isAuthenticated: Boolean(user),
-        login,
-        logout,
-        register,
-        createAdminAccount,
-        updateProfile,
-      }}
-    >
+        value={{
+          user,
+          users,
+          isAuthenticated: Boolean(user),
+          login,
+          logout,
+          register,
+          createAdminAccount,
+          deleteAdminAccount,
+          updateProfile,
+        }}
+      >
       {children}
     </AuthContext.Provider>
   );

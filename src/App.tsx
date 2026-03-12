@@ -17,9 +17,11 @@ import { AdminProfile } from './pages/admin/Resources';
 import { AdminManagement } from './pages/admin/AdminManagement';
 
 // Student Pages
+import { LandingPage } from './pages/Landing';
 import { StudentHome } from './pages/student/Home';
 import { MyLearnings } from './pages/student/MyLearnings';
 import { CoursePlayer } from './pages/student/CoursePlayer';
+import { CourseOutline } from './pages/student/CourseOutline';
 import { BrowseCourses } from './pages/student/Browse';
 import { CourseDetails } from './pages/student/CourseDetails';
 import { StudentProfile } from './pages/student/Profile';
@@ -141,6 +143,10 @@ export default function App() {
         {/* Student Routes */}
         <Route
           path="/"
+          element={<LandingPage />}
+        />
+        <Route
+          path="/home"
           element={(
             <RequireAuth allowedRoles={['Student', 'Admin']}>
               <StudentLayout><StudentHome /></StudentLayout>
@@ -181,6 +187,14 @@ export default function App() {
         />
         <Route
           path="/course/:id/learn"
+          element={(
+            <RequireAuth allowedRoles={['Student', 'Admin']}>
+              <StudentLayout><CourseOutline /></StudentLayout>
+            </RequireAuth>
+          )}
+        />
+        <Route
+          path="/course/:id/learn/lectures/:lectureId"
           element={(
             <RequireAuth allowedRoles={['Student', 'Admin']}>
               <CoursePlayer />

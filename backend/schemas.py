@@ -26,6 +26,18 @@ class LoginResponse(BaseModel):
   message: str | None = None
 
 
+class UpdateProfileInput(BaseModel):
+  name: str = Field(min_length=1, max_length=120)
+  email: EmailStr
+  avatar: str | None = None
+
+
+class UpdateProfileResponse(BaseModel):
+  success: bool
+  user: dict[str, Any] | None = None
+  message: str | None = None
+
+
 class LectureInput(BaseModel):
   id: str | None = None
   title: str = Field(min_length=1, max_length=200)
@@ -117,6 +129,11 @@ class EnrollmentRequestResponse(BaseModel):
 class StudentEnrollmentResponse(BaseModel):
   success: bool
   enrollments: list[dict[str, Any]] | None = None
+  message: str | None = None
+
+
+class ActionResponse(BaseModel):
+  success: bool
   message: str | None = None
 
 
@@ -263,6 +280,10 @@ class GenerateQuizFromVideoInput(BaseModel):
   questionType: Literal["Multiple Choice", "True / False", "Mixed"] = "Multiple Choice"
 
 
+class TranscriptionCheckInput(BaseModel):
+  videoUrl: str = Field(min_length=1, max_length=1000)
+
+
 class GeneratedQuizAnswer(BaseModel):
   text: str = Field(min_length=1)
   explanation: str = Field(default="")
@@ -284,3 +305,18 @@ class GenerateQuizFromVideoResponse(BaseModel):
   success: bool
   quiz: GeneratedQuizPayload | None = None
   message: str | None = None
+
+
+class TranscriptionCheckDetails(BaseModel):
+  videoUrl: str
+  videoId: str | None = None
+  hasYoutubeCaptions: bool = False
+  canDownloadYoutubeAudio: bool | None = None
+  uploadFileResolved: bool = False
+  uploadFilePath: str | None = None
+  message: str | None = None
+
+
+class TranscriptionCheckResponse(BaseModel):
+  success: bool
+  details: TranscriptionCheckDetails

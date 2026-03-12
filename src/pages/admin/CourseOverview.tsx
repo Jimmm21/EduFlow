@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Star, Users, Clock4, PencilLine } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
-import { MOCK_COURSES, MOCK_COURSE_ENROLLMENTS, MOCK_COURSE_REVIEWS, MOCK_ENROLLMENT_REQUESTS } from '../../mockData';
 import { cn } from '../../utils';
-import type { Course } from '../../types';
+import type { Course, AdminStudentEnrollment, EnrollmentRequest, CourseReview } from '../../types';
 import { API_BASE_URL as COURSE_API_BASE_URL } from '../../lib/apiBase';
+import { fetchAdminEnrollmentRequests, fetchAdminStudentEnrollments } from '../../lib/courseApi';
 
 export const AdminCourseOverview = () => {
   const { id } = useParams();
   const [course, setCourse] = useState<Course | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [enrollments, setEnrollments] = useState<AdminStudentEnrollment[]>([]);
+  const [requests, setRequests] = useState<EnrollmentRequest[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) {
@@ -31,13 +34,35 @@ export const AdminCourseOverview = () => {
           return;
         }
       } catch {
-        // Fallback handled below.
+        // Keep course unset on error.
       }
-
-      setCourse(MOCK_COURSES.find((item) => item.id === id) ?? null);
+      setCourse(null);
     };
 
     fetchCourse().finally(() => setIsLoading(false));
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) {
+      return;
+    }
+
+    const loadRelated = async () => {
+      try {
+        const [studentEnrollments, enrollmentRequests] = await Promise.all([
+          fetchAdminStudentEnrollments(id),
+          fetchAdminEnrollmentRequests(id),
+        ]);
+        setEnrollments(studentEnrollments);
+        setRequests(enrollmentRequests);
+      } catch (error) {
+        setEnrollments([]);
+        setRequests([]);
+        setLoadError(error instanceof Error ? error.message : 'Unable to load course engagement data.');
+      }
+    };
+
+    loadRelated();
   }, [id]);
 
   if (isLoading) {
@@ -63,11 +88,8 @@ export const AdminCourseOverview = () => {
     );
   }
 
-  const enrollments = MOCK_COURSE_ENROLLMENTS.filter((item) => item.courseId === course.id);
-  const reviews = MOCK_COURSE_REVIEWS.filter((item) => item.courseId === course.id);
-  const pendingRequests = MOCK_ENROLLMENT_REQUESTS.filter(
-    (item) => item.courseId === course.id && item.status === 'Pending',
-  );
+  const reviews: CourseReview[] = [];
+  const pendingRequests = requests.filter((item) => item.courseId === course.id && item.status === 'Pending');
   const averageProgress = enrollments.length
     ? Math.round(enrollments.reduce((sum, item) => sum + item.progress, 0) / enrollments.length)
     : 0;
@@ -94,6 +116,7 @@ export const AdminCourseOverview = () => {
           Edit Course
         </Link>
       </header>
+      {loadError ? <p className="text-sm font-medium text-red-600">{loadError}</p> : null}
 
       <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
         <article className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -207,7 +230,7 @@ export const AdminCourseOverview = () => {
         <div className="flex flex-wrap items-center gap-6 text-sm text-slate-500">
           <span className="inline-flex items-center gap-2">
             <Users className="w-4 h-4" />
-            {enrollments.length} students shown in sample roster
+            {enrollments.length} students enrolled
           </span>
           <span className="inline-flex items-center gap-2">
             <Clock4 className="w-4 h-4" />

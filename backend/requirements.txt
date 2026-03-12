@@ -4,3 +4,5 @@ psycopg[binary]==3.2.5
 email-validator==2.2.0
 python-dotenv==1.0.1
 python-multipart==0.0.18
+fpdf2==2.7.9
+yt-dlp>=2025.01.01

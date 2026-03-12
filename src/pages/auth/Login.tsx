@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Mail, Lock, Eye, EyeOff, ArrowRight, Github, Chrome } from 'lucide-react';
 import { motion } from 'motion/react';
-import { defaultRouteForRole, INITIAL_LOGIN_CREDENTIALS, useAuth } from '../../auth/AuthContext';
+import { defaultRouteForRole, useAuth } from '../../auth/AuthContext';
 
 export const LoginPage = () => {
   const navigate = useNavigate();
@@ -42,12 +42,6 @@ export const LoginPage = () => {
     const nextPath = resolveRedirectPath(result.user.role);
     setIsLoading(false);
     navigate(nextPath, { replace: true });
-  };
-
-  const fillInitialCredential = (credential: (typeof INITIAL_LOGIN_CREDENTIALS)[number]) => {
-    setEmail(credential.email);
-    setPassword(credential.password);
-    setError(null);
   };
 
   return (
@@ -140,20 +134,6 @@ export const LoginPage = () => {
             )}
           </button>
 
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Initial Credentials</p>
-            {INITIAL_LOGIN_CREDENTIALS.map((credential) => (
-              <button
-                key={credential.email}
-                type="button"
-                onClick={() => fillInitialCredential(credential)}
-                className="w-full text-left p-3 rounded-lg bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40 transition-colors"
-              >
-                <p className="text-sm font-bold text-slate-800">{credential.role}</p>
-                <p className="text-xs text-slate-500">{credential.email} / {credential.password}</p>
-              </button>
-            ))}
-          </div>
         </form>
 
         <div className="relative">

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, Save, Eye, Plus, Video, FileText, HelpCircle, Trash2, GripVertical, CheckCircle2, Circle, Bold, Italic, List, Upload, X, Sparkles } from 'lucide-react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -11,6 +11,28 @@ import { ConfirmDialog } from '../../components/ConfirmDialog';
 const createDraftId = () => `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_VIDEO_SIZE_BYTES = 30 * 1024 * 1024;
+const SECTION_TITLE_DELIMITER = '::';
+
+const buildSectionTitle = (sectionTitle: string, subsectionTitle: string) => {
+  const normalizedSection = sectionTitle.trim() || 'Section';
+  const normalizedSubsection = subsectionTitle.trim() || 'Subsection';
+  return `${normalizedSection} ${SECTION_TITLE_DELIMITER} ${normalizedSubsection}`;
+};
+
+const parseSectionTitle = (title: string) => {
+  const parts = title.split(SECTION_TITLE_DELIMITER).map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    return {
+      sectionTitle: parts[0],
+      subsectionTitle: parts.slice(1).join(` ${SECTION_TITLE_DELIMITER} `).trim(),
+    };
+  }
+
+  return {
+    sectionTitle: '',
+    subsectionTitle: title.trim(),
+  };
+};
 
 const extractApiMessage = (payload: unknown): string | undefined => {
   if (!payload || typeof payload !== 'object') {
@@ -182,7 +204,13 @@ const steps = [
 
 type DeleteTarget =
   | {
-      type: 'section';
+      type: 'section-group';
+      sectionIds: string[];
+      title: string;
+      message: string;
+    }
+  | {
+      type: 'subsection';
       sectionId: string;
       title: string;
       message: string;
@@ -194,6 +222,12 @@ type DeleteTarget =
       title: string;
       message: string;
     };
+
+type SectionGroup = {
+  id: string;
+  title: string;
+  subsections: Array<{ section: Section; title: string }>;
+};
 
 export const CourseCreator = () => {
   const { id } = useParams();
@@ -245,31 +279,99 @@ export const CourseCreator = () => {
   });
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
 
+  const sectionGroups = useMemo<SectionGroup[]>(() => {
+    const groups: SectionGroup[] = [];
+    const groupMap = new Map<string, SectionGroup>();
+
+    sections.forEach((section, index) => {
+      const parsed = parseSectionTitle(section.title);
+      const sectionTitle = parsed.sectionTitle || `Section ${index + 1}`;
+      const subsectionTitle = parsed.subsectionTitle || `Subsection ${index + 1}`;
+      const existing = groupMap.get(sectionTitle);
+      const group = existing ?? { id: section.id, title: sectionTitle, subsections: [] };
+
+      group.subsections.push({ section, title: subsectionTitle });
+      if (!existing) {
+        groupMap.set(sectionTitle, group);
+        groups.push(group);
+      }
+    });
+
+    return groups;
+  }, [sections]);
+
   const setAndPersistSections = (nextSections: Section[]) => {
     setSections(nextSections);
     saveCourseSectionsDraft(courseKey, nextSections);
   };
 
-  const addSection = () => {
+  const addSectionGroup = () => {
+    const nextIndex = sectionGroups.length + 1;
+    const newSectionTitle = `Section ${nextIndex}`;
+    const newSubsectionTitle = 'New Subsection';
     const newSection: Section = {
       id: `s${Date.now()}`,
-      title: 'New Section',
+      title: buildSectionTitle(newSectionTitle, newSubsectionTitle),
       lectures: [],
     };
     setAndPersistSections([...sections, newSection]);
   };
 
-  const removeSection = (sectionId: string) => {
-    const sectionToRemove = sections.find((section) => section.id === sectionId);
-    if (!sectionToRemove) {
+  const addSubsection = (sectionTitle: string) => {
+    const newSection: Section = {
+      id: `s${Date.now()}`,
+      title: buildSectionTitle(sectionTitle, 'New Subsection'),
+      lectures: [],
+    };
+    setAndPersistSections([...sections, newSection]);
+  };
+
+  const updateSectionGroupTitle = (group: SectionGroup, value: string) => {
+    const nextTitle = value.trim() || 'Untitled Section';
+    const nextSections = sections.map((section) => {
+      const subsection = group.subsections.find((item) => item.section.id === section.id);
+      if (!subsection) {
+        return section;
+      }
+      const subsectionTitle = subsection.title.trim() || 'Untitled Subsection';
+      return { ...section, title: buildSectionTitle(nextTitle, subsectionTitle) };
+    });
+    setAndPersistSections(nextSections);
+  };
+
+  const updateSubsectionTitle = (sectionTitle: string, sectionId: string, value: string) => {
+    const nextSubsectionTitle = value.trim() || 'Untitled Subsection';
+    const nextSectionTitle = sectionTitle.trim() || 'Untitled Section';
+    const nextSections = sections.map((section) =>
+      section.id === sectionId
+        ? { ...section, title: buildSectionTitle(nextSectionTitle, nextSubsectionTitle) }
+        : section,
+    );
+    setAndPersistSections(nextSections);
+  };
+
+  const removeSectionGroup = (group: SectionGroup) => {
+    setDeleteTarget({
+      type: 'section-group',
+      sectionIds: group.subsections.map((item) => item.section.id),
+      title: group.title,
+      message: `Delete "${group.title}" and all of its subsections?`,
+    });
+  };
+
+  const removeSubsection = (sectionId: string) => {
+    const subsectionToRemove = sections.find((section) => section.id === sectionId);
+    if (!subsectionToRemove) {
       return;
     }
 
+    const parsed = parseSectionTitle(subsectionToRemove.title);
+    const subsectionTitle = parsed.subsectionTitle || subsectionToRemove.title;
     setDeleteTarget({
-      type: 'section',
+      type: 'subsection',
       sectionId,
-      title: sectionToRemove.title,
-      message: `Delete "${sectionToRemove.title}" and all of its lessons?`,
+      title: subsectionTitle,
+      message: `Delete "${subsectionTitle}" and all of its lessons?`,
     });
   };
 
@@ -325,7 +427,14 @@ export const CourseCreator = () => {
       return;
     }
 
-    if (deleteTarget.type === 'section') {
+    if (deleteTarget.type === 'section-group') {
+      const nextSections = sections.filter((section) => !deleteTarget.sectionIds.includes(section.id));
+      setAndPersistSections(nextSections);
+      setDeleteTarget(null);
+      return;
+    }
+
+    if (deleteTarget.type === 'subsection') {
       const nextSections = sections.filter((section) => section.id !== deleteTarget.sectionId);
       setAndPersistSections(nextSections);
       setDeleteTarget(null);
@@ -1244,10 +1353,10 @@ export const CourseCreator = () => {
                 <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
                     <h2 className="text-2xl font-bold text-slate-900 mb-1">Curriculum</h2>
-                    <p className="text-slate-500">Start putting together your course by creating sections and lectures.</p>
+                    <p className="text-slate-500">Start putting together your course by creating sections, subsections, and lessons.</p>
                   </div>
                   <button 
-                    onClick={addSection}
+                    onClick={addSectionGroup}
                     className="bg-slate-900 text-white px-4 py-2 rounded-xl font-semibold flex items-center gap-2 hover:bg-slate-800 transition-all"
                   >
                     <Plus className="w-4 h-4" />
@@ -1255,96 +1364,138 @@ export const CourseCreator = () => {
                   </button>
                 </div>
 
-                {sections.map((section, sIdx) => (
-                  <div key={section.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <GripVertical className="w-4 h-4 text-slate-300" />
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Section {sIdx + 1}:</span>
-                        <input 
-                          type="text" 
-                          value={section.title}
-                          onChange={(event) => {
-                            const nextSections = sections.map((item) =>
-                              item.id === section.id
-                                ? { ...item, title: event.target.value }
-                                : item,
-                            );
-                            setAndPersistSections(nextSections);
-                          }}
-                          className="font-bold text-slate-900 bg-transparent border-none focus:ring-0 p-0"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeSection(section.id)}
-                        className="p-2 text-slate-400 hover:text-red-600 transition-colors"
-                        aria-label={`Delete ${section.title}`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="p-4 space-y-3">
-                      {section.lectures.map((lecture, lIdx) => (
-                        <div key={lecture.id} className="flex items-center gap-4 p-4 border border-slate-100 rounded-xl hover:border-indigo-200 transition-all group">
-                          <GripVertical className="w-4 h-4 text-slate-200 group-hover:text-slate-400" />
-                          <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center">
-                            {getLectureIcon(lecture.type, 'w-4 h-4 text-indigo-600')}
-                          </div>
-                          <div className="flex-1">
-                            <h4 className="text-sm font-bold text-slate-900">{lIdx + 1}. {lecture.title}</h4>
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{lecture.type}</p>
-                            {lecture.duration && <span className="text-xs text-slate-400">{lecture.duration}</span>}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openLessonEditor(section.id, lecture.id)}
-                              className="px-3 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                            >
-                              Edit Content
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeLecture(section.id, lecture.id)}
-                              className="inline-flex items-center justify-center rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                              aria-label={`Delete ${lecture.title}`}
-                              title="Delete lesson"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <button
-                          type="button"
-                          onClick={() => addContentItem(section.id, 'Video')}
-                          className="py-3 border-2 border-dashed border-slate-100 rounded-xl text-sm font-bold text-slate-400 hover:border-indigo-200 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
-                        >
-                          <Video className="w-4 h-4" />
-                          Add Lecture
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => addContentItem(section.id, 'Quiz')}
-                          className="py-3 border-2 border-dashed border-slate-100 rounded-xl text-sm font-bold text-slate-400 hover:border-indigo-200 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
-                        >
-                          <HelpCircle className="w-4 h-4" />
-                          Add Quiz
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => addContentItem(section.id, 'Resource')}
-                          className="py-3 border-2 border-dashed border-slate-100 rounded-xl text-sm font-bold text-slate-400 hover:border-indigo-200 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
-                        >
-                          <FileText className="w-4 h-4" />
-                          Add Resource
-                        </button>
-                      </div>
-                    </div>
+                {sectionGroups.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center text-slate-500">
+                    Add a section to start building your curriculum.
                   </div>
-                ))}
+                ) : (
+                  sectionGroups.map((group, sIdx) => {
+                    const sectionTitle = group.title.trim() || `Section ${sIdx + 1}`;
+                    return (
+                      <div key={group.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <GripVertical className="w-4 h-4 text-slate-300" />
+                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Section {sIdx + 1}:</span>
+                            <input
+                              type="text"
+                              value={group.title}
+                              onChange={(event) => updateSectionGroupTitle(group, event.target.value)}
+                              placeholder="Section title"
+                              className="font-bold text-slate-900 bg-transparent border-none focus:ring-0 p-0"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeSectionGroup(group)}
+                            className="p-2 text-slate-400 hover:text-red-600 transition-colors"
+                            aria-label={`Delete ${sectionTitle}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        <div className="p-4 space-y-4">
+                          {group.subsections.map((subsection, subIdx) => (
+                            <div key={subsection.section.id} className="rounded-xl border border-slate-200 bg-white">
+                              <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                                <div className="flex items-center gap-3">
+                                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Subsection {subIdx + 1}:</span>
+                                  <input
+                                    type="text"
+                                    value={subsection.title}
+                                    onChange={(event) =>
+                                      updateSubsectionTitle(sectionTitle, subsection.section.id, event.target.value)
+                                    }
+                                    placeholder="Subsection title"
+                                    className="font-semibold text-slate-900 bg-transparent border-none focus:ring-0 p-0"
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => removeSubsection(subsection.section.id)}
+                                  className="p-2 text-slate-400 hover:text-red-600 transition-colors"
+                                  aria-label={`Delete ${subsection.title}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+
+                              <div className="p-4 space-y-3">
+                                {subsection.section.lectures.map((lecture, lIdx) => (
+                                  <div key={lecture.id} className="flex items-center gap-4 p-4 border border-slate-100 rounded-xl hover:border-indigo-200 transition-all group">
+                                    <GripVertical className="w-4 h-4 text-slate-200 group-hover:text-slate-400" />
+                                    <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center">
+                                      {getLectureIcon(lecture.type, 'w-4 h-4 text-indigo-600')}
+                                    </div>
+                                    <div className="flex-1">
+                                      <h4 className="text-sm font-bold text-slate-900">{lIdx + 1}. {lecture.title}</h4>
+                                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{lecture.type}</p>
+                                      {lecture.duration && <span className="text-xs text-slate-400">{lecture.duration}</span>}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => openLessonEditor(subsection.section.id, lecture.id)}
+                                        className="px-3 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                                      >
+                                        Edit Content
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeLecture(subsection.section.id, lecture.id)}
+                                        className="inline-flex items-center justify-center rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                                        aria-label={`Delete ${lecture.title}`}
+                                        title="Delete lesson"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => addContentItem(subsection.section.id, 'Video')}
+                                    className="py-3 border-2 border-dashed border-slate-100 rounded-xl text-sm font-bold text-slate-400 hover:border-indigo-200 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
+                                  >
+                                    <Video className="w-4 h-4" />
+                                    Add Lecture
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => addContentItem(subsection.section.id, 'Quiz')}
+                                    className="py-3 border-2 border-dashed border-slate-100 rounded-xl text-sm font-bold text-slate-400 hover:border-indigo-200 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
+                                  >
+                                    <HelpCircle className="w-4 h-4" />
+                                    Add Quiz
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => addContentItem(subsection.section.id, 'Resource')}
+                                    className="py-3 border-2 border-dashed border-slate-100 rounded-xl text-sm font-bold text-slate-400 hover:border-indigo-200 hover:text-indigo-600 transition-all flex items-center justify-center gap-2"
+                                  >
+                                    <FileText className="w-4 h-4" />
+                                    Add Resource
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+
+                          <button
+                            type="button"
+                            onClick={() => addSubsection(sectionTitle)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-dashed border-slate-200 px-4 py-3 text-sm font-bold text-slate-500 hover:border-indigo-200 hover:text-indigo-600 transition-all"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Add Subsection
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </motion.div>
             )}
 

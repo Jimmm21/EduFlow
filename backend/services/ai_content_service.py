@@ -2,6 +2,8 @@ import json
 import mimetypes
 import random
 import re
+import subprocess
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -17,6 +19,7 @@ from ..config import (
   OPENAI_MODEL,
   OPENAI_TIMEOUT_SECONDS,
   OPENAI_TRANSCRIBE_MODEL,
+  OPENAI_TRANSCRIBE_TIMEOUT_SECONDS,
   UPLOADS_DIR,
   YOUTUBE_API_KEY,
 )
@@ -51,8 +54,11 @@ STOP_WORDS = {
 
 YOUTUBE_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 TRANSCRIPT_MAX_CHARS = 12000
+TRANSCRIPT_SNIPPET_MAX_CHARS = 6000
 SUMMARY_MAX_CHARS = 300
 KEY_POINTS_MAX = 10
+AUDIO_DIR_NAME = "audio"
+TRANSCRIPT_DIR_NAME = "transcripts"
 
 
 def truncate_text(value: str, max_chars: int) -> tuple[str, bool]:
@@ -177,6 +183,91 @@ def resolve_local_upload_path(video_url: str) -> Path | None:
   return candidate
 
 
+def ensure_transcript_directories() -> tuple[Path, Path]:
+  audio_dir = (UPLOADS_DIR / AUDIO_DIR_NAME).resolve()
+  transcript_dir = (UPLOADS_DIR / TRANSCRIPT_DIR_NAME).resolve()
+  audio_dir.mkdir(parents=True, exist_ok=True)
+  transcript_dir.mkdir(parents=True, exist_ok=True)
+  return audio_dir, transcript_dir
+
+
+def convert_video_to_mp3(file_path: Path) -> tuple[Path | None, str | None]:
+  audio_dir, _ = ensure_transcript_directories()
+  output_path = (audio_dir / f"{file_path.stem}.mp3").resolve()
+  command = [
+    "ffmpeg",
+    "-y",
+    "-i",
+    str(file_path),
+    "-vn",
+    "-acodec",
+    "libmp3lame",
+    "-ab",
+    "128k",
+    str(output_path),
+  ]
+
+  try:
+    subprocess.run(command, check=True, capture_output=True, text=True)
+  except FileNotFoundError:
+    return None, "ffmpeg is not installed."
+  except subprocess.CalledProcessError as error:
+    error_output = (error.stderr or error.stdout or "").strip()
+    message = error_output.splitlines()[-1] if error_output else "ffmpeg failed to convert the video."
+    return None, f"ffmpeg failed to convert the video. {message}"
+
+  if not output_path.exists():
+    return None, "Converted mp3 file could not be created."
+
+  return output_path, None
+
+
+def save_transcript_pdf(transcript: str, source_name: str) -> str | None:
+  _, transcript_dir = ensure_transcript_directories()
+  sanitized = re.sub(r"[^a-zA-Z0-9_-]+", "_", source_name.strip().lower()) or "transcript"
+  output_path = (transcript_dir / f"{sanitized}.pdf").resolve()
+
+  try:
+    from fpdf import FPDF
+  except ImportError:
+    return None
+
+  try:
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=12)
+    for line in transcript.splitlines():
+      pdf.multi_cell(0, 6, line)
+    pdf.output(str(output_path))
+  except Exception:
+    return None
+
+  return str(output_path)
+
+
+def get_video_transcript(
+  video_url: str,
+  video_context: dict[str, str],
+) -> tuple[str | None, str | None, str | None]:
+  video_id = video_context.get("videoId") or extract_youtube_video_id(video_url)
+  if video_id:
+    transcript, error = transcribe_youtube_video(video_url)
+    if transcript:
+      return transcript, "YouTube video (Whisper)", None
+    return None, None, error or "Unable to extract audio from the YouTube link."
+
+  local_path = resolve_local_upload_path(video_url)
+  if not local_path:
+    return None, None, "Video URL must be a YouTube link or an uploaded lesson video file."
+
+  transcript, transcript_error = transcribe_local_video(local_path)
+  if transcript:
+    return transcript, "uploaded video file", None
+
+  return None, None, transcript_error or "Unable to transcribe the uploaded video."
+
+
 def build_multipart_form_data(
   fields: dict[str, str],
   file_field: str,
@@ -204,7 +295,60 @@ def build_multipart_form_data(
   return b"".join(lines), boundary
 
 
-def transcribe_local_video(file_path: Path) -> tuple[str | None, str | None]:
+def build_ytdlp_base_opts(output_template: str | None) -> dict[str, object]:
+  opts: dict[str, object] = {
+    "quiet": True,
+    "no_warnings": True,
+    "noplaylist": True,
+    "cachedir": False,
+    "retries": 2,
+    "socket_timeout": max(10, int(OPENAI_TRANSCRIBE_TIMEOUT_SECONDS / 2)),
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "geo_bypass": True,
+    "force_ipv4": True,
+    "format": "bv*+ba/best",
+    "extractor_args": {
+      "youtube": {
+        "player_client": ["android", "web"],
+      }
+    },
+    "allow_unplayable_formats": True,
+    "ignore_no_formats_error": True,
+    "merge_output_format": "mp4",
+  }
+  if output_template:
+    opts["outtmpl"] = output_template
+  return opts
+
+
+def can_download_youtube_video(video_url: str) -> tuple[bool, str | None]:
+  try:
+    import yt_dlp
+  except ImportError:
+    return False, "yt-dlp is not installed. Install it to enable YouTube downloads."
+
+  opts = {**build_ytdlp_base_opts(None), "skip_download": True}
+  try:
+    with yt_dlp.YoutubeDL(opts) as ydl:
+      info = ydl.extract_info(video_url, download=False)
+  except Exception as error:
+    return False, f"Unable to access YouTube video formats. {error}"
+
+  if not info or not isinstance(info, dict):
+    return False, "Unable to access YouTube video formats."
+
+  formats = info.get("formats")
+  if isinstance(formats, list) and not formats:
+    return False, "No downloadable YouTube formats were found."
+
+  return True, None
+
+
+def transcribe_local_video(
+  file_path: Path,
+  source_name: str | None = None,
+) -> tuple[str | None, str | None]:
   if not OPENAI_API_KEY:
     return None, "OPENAI_API_KEY is not configured."
 
@@ -214,13 +358,25 @@ def transcribe_local_video(file_path: Path) -> tuple[str | None, str | None]:
   file_size = file_path.stat().st_size
   if file_size == 0:
     return None, "Uploaded video file is empty."
-  if file_size > MAX_VIDEO_UPLOAD_BYTES:
+
+  source_path = file_path
+  mp3_path, mp3_error = convert_video_to_mp3(file_path)
+  if mp3_path:
+    source_path = mp3_path
+  elif mp3_error:
+    # Continue with original file when conversion fails.
+    pass
+
+  source_size = source_path.stat().st_size
+  if source_size > MAX_VIDEO_UPLOAD_BYTES:
+    if mp3_error and source_path == file_path:
+      return None, f"Uploaded video file is too large to transcribe. {mp3_error}"
     return None, "Uploaded video file is too large to transcribe."
 
-  mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-  file_bytes = file_path.read_bytes()
+  mime_type = mimetypes.guess_type(source_path.name)[0] or "application/octet-stream"
+  file_bytes = source_path.read_bytes()
   fields = {"model": OPENAI_TRANSCRIBE_MODEL, "response_format": "json"}
-  body, boundary = build_multipart_form_data(fields, "file", file_path.name, file_bytes, mime_type)
+  body, boundary = build_multipart_form_data(fields, "file", source_path.name, file_bytes, mime_type)
 
   request = urllib.request.Request(
     "https://api.openai.com/v1/audio/transcriptions",
@@ -233,12 +389,20 @@ def transcribe_local_video(file_path: Path) -> tuple[str | None, str | None]:
   )
 
   try:
-    with urllib.request.urlopen(request, timeout=OPENAI_TIMEOUT_SECONDS) as response:
+    with urllib.request.urlopen(request, timeout=OPENAI_TRANSCRIBE_TIMEOUT_SECONDS) as response:
       response_text = response.read().decode("utf-8")
   except urllib.error.HTTPError as error:
     return None, extract_openai_error_message(error)
-  except (urllib.error.URLError, TimeoutError):
-    return None, "OpenAI transcription service is currently unreachable."
+  except TimeoutError:
+    return (
+      None,
+      f"OpenAI transcription timed out after {OPENAI_TRANSCRIBE_TIMEOUT_SECONDS}s. "
+      "Try a shorter clip or increase OPENAI_TRANSCRIBE_TIMEOUT_SECONDS.",
+    )
+  except urllib.error.URLError as error:
+    reason = getattr(error, "reason", None)
+    detail = f" ({reason})" if reason else ""
+    return None, f"OpenAI transcription service is currently unreachable{detail}."
 
   try:
     payload = json.loads(response_text)
@@ -249,8 +413,36 @@ def transcribe_local_video(file_path: Path) -> tuple[str | None, str | None]:
   if not isinstance(transcript, str) or not transcript.strip():
     return None, "OpenAI transcription returned empty text."
 
-  return normalize_transcript_text(transcript), None
+  normalized = normalize_transcript_text(transcript)
+  save_transcript_pdf(normalized, source_name or file_path.stem)
+  return normalized, None
 
+
+def transcribe_youtube_video(video_url: str) -> tuple[str | None, str | None]:
+  try:
+    import yt_dlp
+  except ImportError:
+    return None, "yt-dlp is not installed. Install it to enable YouTube video downloads."
+
+  video_id = extract_youtube_video_id(video_url) or "video"
+  with tempfile.TemporaryDirectory(prefix="eduflow_yt_") as temp_dir:
+    output_template = str(Path(temp_dir) / f"{video_id}.%(ext)s")
+    base_opts = build_ytdlp_base_opts(output_template)
+    try:
+      with yt_dlp.YoutubeDL(base_opts) as ydl:
+        info = ydl.extract_info(video_url, download=True)
+        file_path = Path(ydl.prepare_filename(info))
+    except Exception as error:
+      return None, f"Unable to download YouTube video. {error}"
+
+    if not file_path.exists():
+      mp4_candidate = file_path.with_suffix(".mp4")
+      if mp4_candidate.exists():
+        file_path = mp4_candidate
+      else:
+        return None, "YouTube video download failed."
+
+    return transcribe_local_video(file_path, source_name=video_id)
 
 def normalize_key_points(raw_points: object) -> list[str]:
   if not isinstance(raw_points, list):
@@ -267,6 +459,47 @@ def normalize_key_points(raw_points: object) -> list[str]:
       break
 
   return normalized
+
+
+def check_transcription_options(video_url: str) -> dict[str, object]:
+  cleaned_url = video_url.strip()
+  if not cleaned_url:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Video URL is required.")
+
+  video_context = fetch_youtube_video_context(cleaned_url)
+  video_id = video_context.get("videoId") or extract_youtube_video_id(cleaned_url)
+
+  details: dict[str, object] = {
+    "videoUrl": cleaned_url,
+    "videoId": video_id,
+    "hasYoutubeCaptions": False,
+    "canDownloadYoutubeAudio": None,
+    "uploadFileResolved": False,
+    "uploadFilePath": None,
+    "message": None,
+  }
+
+  if video_id:
+    can_download, error = can_download_youtube_video(cleaned_url)
+    details["canDownloadYoutubeAudio"] = can_download
+    if can_download:
+      details["message"] = "YouTube video download is available; it will be converted to MP3 and transcribed."
+    else:
+      details["message"] = (
+        error
+        or "Unable to access YouTube video formats. Upload the video file if the link is restricted."
+      )
+    return details
+
+  local_path = resolve_local_upload_path(cleaned_url)
+  if not local_path:
+    details["message"] = "Video URL is not a YouTube link and no uploaded lesson video file was found."
+    return details
+
+  details["uploadFileResolved"] = True
+  details["uploadFilePath"] = str(local_path)
+  details["message"] = "Uploaded lesson video file resolved."
+  return details
 
 
 def call_openai_video_summarizer(
@@ -357,8 +590,12 @@ def call_openai_video_summarizer(
   return summary, key_points, None
 
 
-def build_analysis_context(summary: str | None, key_points: list[str]) -> str | None:
-  if not summary and not key_points:
+def build_analysis_context(
+  summary: str | None,
+  key_points: list[str],
+  transcript: str | None,
+) -> str | None:
+  if not summary and not key_points and not transcript:
     return None
 
   lines: list[str] = []
@@ -367,6 +604,10 @@ def build_analysis_context(summary: str | None, key_points: list[str]) -> str | 
   if key_points:
     lines.append("Key points:")
     lines.extend([f"- {point}" for point in key_points])
+  if transcript:
+    snippet, _ = truncate_text(transcript, TRANSCRIPT_SNIPPET_MAX_CHARS)
+    lines.append("Transcript excerpt:")
+    lines.append(snippet)
 
   return "\n".join(lines)
 
@@ -848,46 +1089,28 @@ def build_video_analysis(
   video_context: dict[str, str],
 ) -> tuple[str | None, str | None, str | None]:
   video_url = payload.videoUrl.strip()
-  transcript: str | None = None
-  transcript_source: str | None = None
-  transcript_error: str | None = None
-
-  video_id = video_context.get("videoId") or extract_youtube_video_id(video_url)
-  if video_id:
-    transcript = fetch_youtube_transcript(video_id)
-    if transcript:
-      transcript_source = "YouTube captions"
-
+  transcript, transcript_source, transcript_error = get_video_transcript(video_url, video_context)
   if not transcript:
-    local_path = resolve_local_upload_path(video_url)
-    if local_path:
-      transcript, transcript_error = transcribe_local_video(local_path)
-      if transcript:
-        transcript_source = "uploaded video file"
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail=transcript_error or "Unable to extract audio from the YouTube link.",
+    )
 
   summary: str | None = None
   key_points: list[str] = []
   summary_error: str | None = None
-  if transcript:
-    summary, key_points, summary_error = call_openai_video_summarizer(
-      transcript,
-      video_context,
-      payload.lessonTitle,
-    )
+  summary, key_points, summary_error = call_openai_video_summarizer(
+    transcript,
+    video_context,
+    payload.lessonTitle,
+  )
 
-  if not summary:
-    summary = build_metadata_summary(video_context, payload.lessonTitle)
-
-  analysis_context = build_analysis_context(summary if transcript else None, key_points)
+  analysis_context = build_analysis_context(summary, key_points, transcript)
   message = None
   if transcript_source and summary_error:
     message = f"Quiz generated from {transcript_source}. Summary unavailable."
   elif transcript_source:
-    message = f"Quiz generated from {transcript_source} summary."
-  elif transcript_error:
-    message = f"Quiz generated from metadata only. {transcript_error}"
-  elif not transcript:
-    message = "Quiz generated from metadata only."
+    message = f"Quiz generated from {transcript_source}."
 
   return summary or None, analysis_context, message
 
@@ -1191,11 +1414,9 @@ def generate_quiz_from_video(payload: GenerateQuizFromVideoInput) -> GenerateQui
   analysis_summary, analysis_context, analysis_message = build_video_analysis(payload, video_context)
   quiz_payload, ai_error = call_openai_quiz_generator(payload, video_context, analysis_context)
   if not quiz_payload:
-    fallback_quiz = build_fallback_quiz(payload)
-    return GenerateQuizFromVideoResponse(
-      success=True,
-      quiz=fallback_quiz,
-      message=f"Used fallback quiz generator. Reason: {ai_error}" if ai_error else "Used fallback quiz generator.",
+    raise HTTPException(
+      status_code=status.HTTP_502_BAD_GATEWAY,
+      detail=ai_error or "Unable to generate quiz from the video transcript.",
     )
 
   if analysis_summary:
@@ -1208,3 +1429,4 @@ def generate_quiz_from_video(payload: GenerateQuizFromVideoInput) -> GenerateQui
     message = "Quiz generated from provided URL and lesson context."
 
   return GenerateQuizFromVideoResponse(success=True, quiz=quiz_payload, message=message)
+

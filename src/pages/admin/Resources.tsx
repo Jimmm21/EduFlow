@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Mail, Save, Shield, Upload, User, X } from 'lucide-react';
 import { useAuth } from '../../auth/AuthContext';
 import { UserAvatar } from '../../components/UserAvatar';
+import { uploadUserAvatar } from '../../lib/userApi';
 
 const MAX_AVATAR_SIZE_BYTES = 2 * 1024 * 1024;
 
@@ -13,6 +14,8 @@ export const AdminProfile = () => {
   const [selectedFileName, setSelectedFileName] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -31,21 +34,23 @@ export const AdminProfile = () => {
 
   const adminCount = users.filter((account) => account.role === 'Admin').length;
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setMessage(null);
     setError(null);
 
-    const result = updateProfile({ name, email, avatar });
+    setIsSaving(true);
+    const result = await updateProfile({ name, email, avatar });
+    setIsSaving(false);
     if (!result.success) {
       setError(result.message ?? 'Unable to update profile.');
       return;
     }
 
-    setMessage('Admin profile updated successfully.');
+    setMessage(result.message ?? 'Admin profile updated successfully.');
   };
 
-  const handleAvatarUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
       return;
@@ -66,21 +71,17 @@ export const AdminProfile = () => {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : '';
-      if (!result) {
-        setError('Unable to read the selected file.');
-        return;
-      }
+    setIsUploading(true);
+    const uploadResult = await uploadUserAvatar(file);
+    setIsUploading(false);
+    if (!uploadResult.success || !uploadResult.data) {
+      setError(uploadResult.message ?? 'Unable to upload avatar.');
+      event.target.value = '';
+      return;
+    }
 
-      setAvatar(result);
-      setSelectedFileName(file.name);
-    };
-    reader.onerror = () => {
-      setError('Unable to read the selected file.');
-    };
-    reader.readAsDataURL(file);
+    setAvatar(uploadResult.data.url);
+    setSelectedFileName(uploadResult.data.fileName);
     event.target.value = '';
   };
 
@@ -172,8 +173,8 @@ export const AdminProfile = () => {
                 <div className="flex items-center gap-2">
                   <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-700">
                     <Upload className="h-4 w-4" />
-                    Upload File
-                    <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+                    {isUploading ? 'Uploading...' : 'Upload File'}
+                    <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" disabled={isUploading} />
                   </label>
                   {avatar ? (
                     <button
@@ -195,10 +196,11 @@ export const AdminProfile = () => {
 
           <button
             type="submit"
-            className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
+            disabled={isSaving}
+            className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             <Save className="h-4 w-4" />
-            Save Profile
+            {isSaving ? 'Saving...' : 'Save Profile'}
           </button>
         </form>
       </section>
