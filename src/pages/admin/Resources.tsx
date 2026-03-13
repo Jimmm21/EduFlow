@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Mail, Save, Shield, Upload, User, X } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, Save, Shield, Upload, User, X } from 'lucide-react';
 import { useAuth } from '../../auth/AuthContext';
 import { UserAvatar } from '../../components/UserAvatar';
 import { uploadUserAvatar } from '../../lib/userApi';
@@ -12,6 +12,12 @@ export const AdminProfile = () => {
   const [email, setEmail] = useState('');
   const [avatar, setAvatar] = useState('');
   const [selectedFileName, setSelectedFileName] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -39,8 +45,34 @@ export const AdminProfile = () => {
     setMessage(null);
     setError(null);
 
+    const wantsPasswordChange = Boolean(currentPassword || newPassword || confirmPassword);
+    if (wantsPasswordChange) {
+      if (!currentPassword || !newPassword || !confirmPassword) {
+        setError('Please complete all password fields to change your password.');
+        return;
+      }
+      if (newPassword.length < 8) {
+        setError('New password must be at least 8 characters.');
+        return;
+      }
+      if (currentPassword === newPassword) {
+        setError('New password must be different from your current password.');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setError('New password and confirmation do not match.');
+        return;
+      }
+    }
+
     setIsSaving(true);
-    const result = await updateProfile({ name, email, avatar });
+    const result = await updateProfile({
+      name,
+      email,
+      avatar,
+      currentPassword: wantsPasswordChange ? currentPassword : undefined,
+      newPassword: wantsPasswordChange ? newPassword : undefined,
+    });
     setIsSaving(false);
     if (!result.success) {
       setError(result.message ?? 'Unable to update profile.');
@@ -48,6 +80,14 @@ export const AdminProfile = () => {
     }
 
     setMessage(result.message ?? 'Admin profile updated successfully.');
+    if (wantsPasswordChange) {
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setShowCurrentPassword(false);
+      setShowNewPassword(false);
+      setShowConfirmPassword(false);
+    }
   };
 
   const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -189,6 +229,77 @@ export const AdminProfile = () => {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-700">Change Password</h3>
+              <p className="text-xs text-slate-500">Leave blank to keep your current password.</p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <label className="space-y-2">
+                <span className="text-sm font-semibold text-slate-600">Current Password</span>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type={showCurrentPassword ? 'text' : 'password'}
+                    value={currentPassword}
+                    onChange={(event) => setCurrentPassword(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-10 outline-none transition-all focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                    placeholder="Enter current password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCurrentPassword((prev) => !prev)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    {showCurrentPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-semibold text-slate-600">New Password</span>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-10 outline-none transition-all focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                    placeholder="Create a new password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((prev) => !prev)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </label>
+            </div>
+
+            <label className="space-y-2">
+              <span className="text-sm font-semibold text-slate-600">Confirm New Password</span>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-10 outline-none transition-all focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                  placeholder="Re-enter new password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </label>
           </div>
 
           {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}

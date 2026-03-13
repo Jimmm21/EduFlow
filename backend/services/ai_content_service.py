@@ -23,6 +23,7 @@ from ..config import (
   UPLOADS_DIR,
   YOUTUBE_API_KEY,
 )
+from . import storage_service
 from ..schemas import (
   GenerateAutomatedMessagesInput,
   GenerateAutomatedMessagesResponse,
@@ -183,6 +184,15 @@ def resolve_local_upload_path(video_url: str) -> Path | None:
   return candidate
 
 
+def resolve_r2_lesson_video_key(video_url: str) -> str | None:
+  object_key = storage_service.parse_r2_object_key(video_url)
+  if not object_key:
+    return None
+  if not object_key.startswith("lesson-videos/"):
+    return None
+  return object_key
+
+
 def ensure_transcript_directories() -> tuple[Path, Path]:
   audio_dir = (UPLOADS_DIR / AUDIO_DIR_NAME).resolve()
   transcript_dir = (UPLOADS_DIR / TRANSCRIPT_DIR_NAME).resolve()
@@ -258,12 +268,19 @@ def get_video_transcript(
     return None, None, error or "Unable to extract audio from the YouTube link."
 
   local_path = resolve_local_upload_path(video_url)
-  if not local_path:
+  if local_path:
+    transcript, transcript_error = transcribe_local_video(local_path)
+    if transcript:
+      return transcript, "uploaded video file", None
+    return None, None, transcript_error or "Unable to transcribe the uploaded video."
+
+  r2_object_key = resolve_r2_lesson_video_key(video_url)
+  if not r2_object_key:
     return None, None, "Video URL must be a YouTube link or an uploaded lesson video file."
 
-  transcript, transcript_error = transcribe_local_video(local_path)
+  transcript, transcript_error = transcribe_r2_video(r2_object_key)
   if transcript:
-    return transcript, "uploaded video file", None
+    return transcript, "uploaded video file (cloud storage)", None
 
   return None, None, transcript_error or "Unable to transcribe the uploaded video."
 
@@ -418,6 +435,16 @@ def transcribe_local_video(
   return normalized, None
 
 
+def transcribe_r2_video(object_key: str) -> tuple[str | None, str | None]:
+  file_name = Path(object_key).name or "uploaded-video"
+  with tempfile.TemporaryDirectory(prefix="eduflow_r2_") as temp_dir:
+    temp_path = Path(temp_dir) / file_name
+    download_error = storage_service.download_to_path(object_key=object_key, destination=temp_path)
+    if download_error:
+      return None, download_error
+    return transcribe_local_video(temp_path, source_name=temp_path.stem)
+
+
 def transcribe_youtube_video(video_url: str) -> tuple[str | None, str | None]:
   try:
     import yt_dlp
@@ -492,13 +519,20 @@ def check_transcription_options(video_url: str) -> dict[str, object]:
     return details
 
   local_path = resolve_local_upload_path(cleaned_url)
-  if not local_path:
-    details["message"] = "Video URL is not a YouTube link and no uploaded lesson video file was found."
+  if local_path:
+    details["uploadFileResolved"] = True
+    details["uploadFilePath"] = str(local_path)
+    details["message"] = "Uploaded lesson video file resolved."
     return details
 
-  details["uploadFileResolved"] = True
-  details["uploadFilePath"] = str(local_path)
-  details["message"] = "Uploaded lesson video file resolved."
+  r2_object_key = resolve_r2_lesson_video_key(cleaned_url)
+  if r2_object_key:
+    details["uploadFileResolved"] = True
+    details["uploadFilePath"] = r2_object_key
+    details["message"] = "Uploaded lesson video file resolved from cloud storage."
+    return details
+
+  details["message"] = "Video URL is not a YouTube link and no uploaded lesson video file was found."
   return details
 
 
@@ -870,6 +904,7 @@ def call_openai_automated_messages(
     "Constraints:\n"
     "- Output strict JSON only.\n"
     "- Each message must be 2-4 sentences and practical, warm, and direct.\n"
+    "- Use a formal, professional tone.\n"
     "- welcomeMessage: sent when a student starts the course.\n"
     "- reminderMessage: sent while a student is in progress to encourage continuation.\n"
     "- congratulationsMessage: sent once the student completes the course.\n"

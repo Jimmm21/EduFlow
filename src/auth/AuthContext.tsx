@@ -59,6 +59,8 @@ interface UpdateProfileInput {
   name: string;
   email: string;
   avatar?: string;
+  currentPassword?: string;
+  newPassword?: string;
 }
 
 interface UpdateProfileResult {
@@ -734,12 +736,38 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const nextName = input.name.trim();
     const nextEmail = normalizeEmail(input.email);
     const nextAvatar = input.avatar?.trim() || undefined;
+    const currentPassword = input.currentPassword;
+    const newPassword = input.newPassword;
+    const wantsPasswordChange = Boolean(currentPassword || newPassword);
 
     if (!nextName || !nextEmail) {
       return {
         success: false,
         message: 'Name and email are required.',
       };
+    }
+
+    if (wantsPasswordChange) {
+      if (!currentPassword || !newPassword) {
+        return {
+          success: false,
+          message: 'Current and new passwords are required to change your password.',
+        };
+      }
+
+      if (newPassword.length < 8) {
+        return {
+          success: false,
+          message: 'New password must be at least 8 characters.',
+        };
+      }
+
+      if (currentPassword === newPassword) {
+        return {
+          success: false,
+          message: 'New password must be different from the current password.',
+        };
+      }
     }
 
     const emailInUseByAnotherUser = allCredentials.some(
@@ -757,6 +785,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       name: nextName,
       email: nextEmail,
       avatar: nextAvatar ?? null,
+      currentPassword: wantsPasswordChange ? currentPassword : undefined,
+      newPassword: wantsPasswordChange ? newPassword : undefined,
     });
     if (!apiResult.success || !apiResult.data) {
       return {
@@ -796,6 +826,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               name: nextUser.name,
               email: nextUser.email,
               avatar: nextUser.avatar,
+              password: wantsPasswordChange && newPassword ? newPassword : credential.password,
             }
           : credential,
       );

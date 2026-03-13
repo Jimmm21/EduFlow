@@ -829,11 +829,12 @@ export const CourseCreator = () => {
     const previewBackTo = searchParams.toString()
       ? `${editorBasePath}?${searchParams.toString()}`
       : editorBasePath;
+    const previewId = id ?? 'draft';
 
-    navigate(`/course/${id ?? 'preview'}`, {
+    navigate(`/admin/courses/${previewId}/preview`, {
       state: {
         previewCourse: {
-          id: id ?? 'preview',
+          id: previewId,
           title: courseTitle.trim() || 'Untitled Course',
           subtitle: courseSubtitle.trim() || 'Course subtitle preview',
           description: courseDescription.trim() || 'Course description preview.',
@@ -855,6 +856,7 @@ export const CourseCreator = () => {
           lastUpdated: new Date().toISOString().slice(0, 10),
         },
         previewBackTo,
+        previewBackLabel: 'Back to Editor',
       },
     });
   };
@@ -1031,9 +1033,10 @@ export const CourseCreator = () => {
       setCourseStatus('Published');
 
       const editorBasePath = `/admin/courses/${result.courseId}`;
-      const query = activeStep === 1 ? '' : `?step=${activeStep}`;
-      const previewBackTo = `${editorBasePath}${query}`;
-      navigate(`/course/${result.courseId}`, { state: { previewBackTo } });
+      const previewBackTo = '/admin';
+      navigate(`/admin/courses/${result.courseId}/preview`, {
+        state: { previewBackTo, previewBackLabel: 'Back to Dashboard' },
+      });
       return;
     } catch {
       setSaveError('Cannot reach the course service. Please try again.');

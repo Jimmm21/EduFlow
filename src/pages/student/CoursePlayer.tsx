@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Play, ChevronLeft, CheckCircle2, Circle, Menu, X, Share2, MoreVertical, FileText, HelpCircle, Video, Star, ExternalLink, Download } from 'lucide-react';
+import { Play, ChevronLeft, CheckCircle2, Circle, Menu, X, MoreVertical, FileText, HelpCircle, Video, Star, ExternalLink, Download } from 'lucide-react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../utils';
@@ -655,10 +655,6 @@ export const CoursePlayer = () => {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button className="hidden items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all hover:bg-white/10 sm:flex">
-            <Share2 className="h-4 w-4" />
-            Share Course
-          </button>
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="rounded-lg p-2 transition-colors hover:bg-white/10">
             {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>

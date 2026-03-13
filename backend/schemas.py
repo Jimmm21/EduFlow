@@ -30,6 +30,8 @@ class UpdateProfileInput(BaseModel):
   name: str = Field(min_length=1, max_length=120)
   email: EmailStr
   avatar: str | None = None
+  currentPassword: str | None = Field(default=None, min_length=1, max_length=128)
+  newPassword: str | None = Field(default=None, min_length=8, max_length=128)
 
 
 class UpdateProfileResponse(BaseModel):

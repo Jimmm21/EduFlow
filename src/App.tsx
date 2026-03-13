@@ -92,6 +92,14 @@ export default function App() {
           )}
         />
         <Route
+          path="/admin/courses/:id/preview"
+          element={(
+            <RequireAuth allowedRoles={['Admin']}>
+              <AdminLayout><CourseDetails /></AdminLayout>
+            </RequireAuth>
+          )}
+        />
+        <Route
           path="/admin/courses/:courseId/sections/:sectionId/lectures/:lectureId/edit"
           element={(
             <RequireAuth allowedRoles={['Admin']}>

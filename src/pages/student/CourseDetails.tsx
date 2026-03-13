@@ -8,6 +8,7 @@ import { enrollInCourse, fetchPublicCourse } from '../../lib/courseApi';
 type PreviewLocationState = {
   previewCourse?: Course;
   previewBackTo?: string;
+  previewBackLabel?: string;
 };
 
 type DescriptionBlock =
@@ -122,6 +123,7 @@ export const CourseDetails = () => {
   const locationState = (location.state as PreviewLocationState | null) ?? null;
   const previewCourse = locationState?.previewCourse ?? null;
   const previewBackTo = locationState?.previewBackTo ?? null;
+  const previewBackLabel = locationState?.previewBackLabel ?? null;
   const [course, setCourse] = useState<Course | null>(previewCourse);
   const [isLoading, setIsLoading] = useState(!previewCourse);
   const [isEnrolling, setIsEnrolling] = useState(false);
@@ -255,7 +257,7 @@ export const CourseDetails = () => {
               className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100"
             >
               <ArrowLeft className="h-4 w-4" />
-              Back to Editor
+              {previewBackLabel || 'Back to Editor'}
             </Link>
           </div>
         </div>
@@ -264,7 +266,11 @@ export const CourseDetails = () => {
         <div className="mx-auto grid max-w-7xl grid-cols-1 gap-12 px-4 lg:grid-cols-3">
           <div className="space-y-6 lg:col-span-2">
             <nav className="flex items-center gap-2 text-sm font-medium text-indigo-400">
-              <Link to="/browse" className="hover:underline">{course.category}</Link>
+              {previewBackTo ? (
+                <span>{course.category}</span>
+              ) : (
+                <Link to="/browse" className="hover:underline">{course.category}</Link>
+              )}
               <span className="text-slate-600">/</span>
               <span>{course.level}</span>
             </nav>

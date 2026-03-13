@@ -121,26 +121,6 @@ export const RegisterPage = () => {
           </button>
         </form>
 
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-slate-200"></div>
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-white px-4 text-slate-400 font-bold tracking-wider">Or sign up with</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <button className="flex items-center justify-center gap-2 py-3 border border-slate-200 rounded-xl hover:bg-slate-50 transition-all font-bold text-sm text-slate-700">
-            <Chrome className="w-4 h-4" />
-            Google
-          </button>
-          <button className="flex items-center justify-center gap-2 py-3 border border-slate-200 rounded-xl hover:bg-slate-50 transition-all font-bold text-sm text-slate-700">
-            <Github className="w-4 h-4" />
-            GitHub
-          </button>
-        </div>
-
         <p className="text-center text-sm text-slate-500">
           Already have an account?{' '}
           <Link to="/login" className="font-bold text-indigo-600 hover:text-indigo-700">

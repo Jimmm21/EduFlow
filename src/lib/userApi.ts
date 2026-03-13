@@ -5,6 +5,8 @@ type ProfileUpdateInput = {
   name: string;
   email: string;
   avatar?: string | null;
+  currentPassword?: string;
+  newPassword?: string;
 };
 
 type ApiResult<T> = {

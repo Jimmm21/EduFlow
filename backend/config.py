@@ -56,6 +56,12 @@ GMAIL_REFRESH_TOKEN = os.getenv("GMAIL_REFRESH_TOKEN", "").strip()
 GMAIL_SENDER_EMAIL = os.getenv("GMAIL_SENDER_EMAIL", "").strip()
 GMAIL_SENDER_NAME = os.getenv("GMAIL_SENDER_NAME", "EduFlow").strip() or "EduFlow"
 GMAIL_TIMEOUT_SECONDS = max(5, parse_positive_int(os.getenv("GMAIL_TIMEOUT_SECONDS", DEFAULT_GMAIL_TIMEOUT_SECONDS), 20))
+R2_ENDPOINT = os.getenv("R2_ENDPOINT", "").strip()
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "").strip()
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "").strip()
+R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "").strip()
+R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "").strip()
+R2_REGION = os.getenv("R2_REGION", "auto").strip() or "auto"
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", DEFAULT_UPLOADS_DIR)).resolve()
 MAX_IMAGE_UPLOAD_BYTES = max(
   1,

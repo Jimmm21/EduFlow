@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile, status
 
 from ..config import MAX_IMAGE_UPLOAD_BYTES, MAX_RESOURCE_UPLOAD_BYTES, MAX_VIDEO_UPLOAD_BYTES, UPLOADS_DIR
+from . import storage_service
 
 IMAGE_UPLOAD_DIR = UPLOADS_DIR / "course-images"
 VIDEO_UPLOAD_DIR = UPLOADS_DIR / "promo-videos"
@@ -65,6 +66,7 @@ async def save_promo_video(file: UploadFile, base_url: str) -> dict[str, str]:
     allowed_extensions=ALLOWED_VIDEO_EXTENSIONS,
     fallback_extension=FALLBACK_VIDEO_EXTENSION,
     error_label="Promotional video",
+    use_r2=True,
   )
 
 
@@ -79,6 +81,7 @@ async def save_lesson_video(file: UploadFile, base_url: str) -> dict[str, str]:
     allowed_extensions=ALLOWED_VIDEO_EXTENSIONS,
     fallback_extension=FALLBACK_VIDEO_EXTENSION,
     error_label="Lesson video",
+    use_r2=True,
   )
 
 
@@ -170,6 +173,7 @@ async def _save_file(
   allowed_extensions: set[str],
   fallback_extension: str,
   error_label: str,
+  use_r2: bool = False,
 ) -> dict[str, str]:
   file_name = (file.filename or "").strip()
   if not file_name:
@@ -199,19 +203,33 @@ async def _save_file(
 
   extension = sanitize_extension(file_name, allowed_extensions, fallback_extension)
   stored_file_name = f"{upload_subpath}-{secrets.token_hex(16)}{extension}"
-  stored_file_path = upload_directory / stored_file_name
-  upload_directory.mkdir(parents=True, exist_ok=True)
+  if use_r2 and storage_service.r2_is_configured():
+    object_key = f"{upload_subpath}/{stored_file_name}"
+    upload_error = storage_service.upload_bytes(
+      object_key=object_key,
+      data=binary_data,
+      content_type=content_type or None,
+    )
+    if upload_error:
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Unable to store {error_label.lower()} in cloud storage.",
+      )
+    public_url = storage_service.build_public_url(object_key)
+  else:
+    stored_file_path = upload_directory / stored_file_name
+    upload_directory.mkdir(parents=True, exist_ok=True)
 
-  try:
-    stored_file_path.write_bytes(binary_data)
-  except OSError as error:
-    raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-      detail=f"Unable to store {error_label.lower()}.",
-    ) from error
+    try:
+      stored_file_path.write_bytes(binary_data)
+    except OSError as error:
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Unable to store {error_label.lower()}.",
+      ) from error
 
-  normalized_base_url = base_url.rstrip("/")
-  public_url = f"{normalized_base_url}/uploads/{upload_subpath}/{stored_file_name}"
+    normalized_base_url = base_url.rstrip("/")
+    public_url = f"{normalized_base_url}/uploads/{upload_subpath}/{stored_file_name}"
 
   return {
     "url": public_url,
